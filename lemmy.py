@@ -64,6 +64,17 @@ class LemmyCommunicator:
         else:
             raise ValueError(f"User '{actor_id}' not found")
 
+    def fetch_community_id(self, community_name):
+        url = f'https://{self.server}/api/v3/community'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        params = {'name': community_name}
+        response = self._make_request('get', url, headers=headers, params=params)
+        community = response.json().get('community_view')
+        if community:
+            return community['community']['id']
+        else:
+            raise ValueError(f"Community '{self.community_name}' not found")
+
     def url_to_username(self, url):
         try:
             parts = url.split('/')
@@ -149,6 +160,19 @@ class LemmyCommunicator:
         response = self._make_request('post', url, headers=headers, json=data)
         return response.json()['community_view']['community']
 
+    def appoint_mod(self, community_id, person_id, mod_status=True):
+        """Create a new community."""
+        url = f'https://{self.server}/api/v3/community/mod'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        data = {
+            'community_id': community_id,
+            'person_id': person_id,
+            'added': mod_status
+        }
+        print(data)
+
+        self._make_request('post', url, headers=headers, json=data)
+
     def create_comment(self, post_id, content):
         url = f'https://{self.server}/api/v3/comment'
         headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
@@ -170,31 +194,3 @@ class LemmyCommunicator:
             elif not response.ok:
                 response.raise_for_status()
             return response
-
-    def print_recent_content_to_remove(self, banlist, hours=3):
-        """
-        Print recent content from banned users flagged for content removal.
-
-        Args:
-        banlist: Dictionary of users with their ban status and content removal flag.
-        hours: The time threshold for removing recent content.
-        """
-        threshold_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-
-        for comment in self.fetch_recent_comments():
-            comment_id = comment['comment']['id']
-            comment_time = parse_datetime(comment['comment']['published'])
-            user_id = comment['creator']['id']
-            if comment_time < threshold_time:
-                break
-            if banlist.get(user_id) == (True, True, True):
-                print(f"Recent comment by banned user {user_id}: {comment_id}")
-
-        for post in self.fetch_recent_posts():
-            post_id = post['post']['id']
-            post_time = parse_datetime(post['post']['published'])
-            user_id = post['creator']['id']
-            if post_time < threshold_time:
-                break
-            if banlist.get(user_id) == (True, True, True):
-                print(f"Recent post by banned user {user_id}: {post_id}")
