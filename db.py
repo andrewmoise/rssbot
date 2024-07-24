@@ -15,6 +15,7 @@ class RSSFeedDB:
                     id INTEGER PRIMARY KEY,
                     feed_url TEXT UNIQUE,
                     community_name TEXT,
+                    community_id INTEGER,
                     last_checked TIMESTAMP,
                     process_id INTEGER
                 )
@@ -32,14 +33,14 @@ class RSSFeedDB:
             ''')
             conn.commit()
 
-    def add_feed(self, feed_url, community_name):
+    def add_feed(self, feed_url, community_name, community_id):
         """Add a new RSS feed to the database."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name)
-                VALUES (?, ?)
-            ''', (feed_url, community_name))
+                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id)
+                VALUES (?, ?, ?)
+            ''', (feed_url, community_name, community_id))
             conn.commit()
 
     def update_feed(self, feed_url, last_checked, process_id=None):

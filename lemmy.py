@@ -22,7 +22,6 @@ class LemmyCommunicator:
     def __init__(self, username=None):
         self.server = Config.LEMMY_SERVER
         self.username = username if username else Config.LEMMY_USERNAME
-        self.community_name = Config.LEMMY_COMMUNITY
         self.token = self.get_token()
         if not self.token:
             if Config.LEMMY_PASSWORD and not username:
@@ -30,7 +29,6 @@ class LemmyCommunicator:
             else:
                 password = getpass.getpass(f"Enter password for {self.username} on {self.server}: ")
             self.token = self.login(password)
-        self.community_id = self.fetch_community_id()
 
     def get_token(self):
         token_file = self.TOKEN_FILE_TEMPLATE.format(server=self.server, user=self.username)
@@ -55,35 +53,6 @@ class LemmyCommunicator:
         self.save_token(token)
         return token
 
-    def fetch_community_id(self):
-        url = f'https://{self.server}/api/v3/community'
-        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
-        params = {'name': self.community_name}
-        response = self._make_request('get', url, headers=headers, params=params)
-        community = response.json().get('community_view')
-        if community:
-            return community['community']['id']
-        else:
-            raise ValueError(f"Community '{self.community_name}' not found")
-
-    def fetch_modlog(self):
-        modlog = []
-        page = 1
-        while True:
-            url = f'https://{self.server}/api/v3/modlog'
-            headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
-            params = {'community_id': self.community_id, 'type_': 'ModBanFromCommunity', 'page': page, 'limit': 50}
-            response = self._make_request('get', url, headers=headers, params=params)
-            data = response.json().get('banned_from_community', [])
-
-            if not data:
-                break
-
-            modlog.extend(data)
-            page += 1
-
-        return modlog
-
     def fetch_user_id(self, actor_id):
         url = f'https://{self.server}/api/v3/user'
         headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
@@ -94,24 +63,6 @@ class LemmyCommunicator:
             return user['person']['id']
         else:
             raise ValueError(f"User '{actor_id}' not found")
-
-    def ban_user(self, user_id, ban=True):
-        url = f'https://{self.server}/api/v3/community/ban_user'
-        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
-        if ban:
-            reason = Config.BAN_REASON.format(server=Config.LEMMY_SERVER)
-        else:
-            reason = Config.UNBAN_REASON.format(server=Config.LEMMY_SERVER)
-
-        data = {
-            'community_id': self.community_id,
-            'person_id': user_id,
-            'ban': ban,
-            'reason': reason,
-            'remove_data': False
-        }
-
-        self._make_request('post', url, headers=headers, json=data)
 
     def url_to_username(self, url):
         try:
@@ -165,16 +116,38 @@ class LemmyCommunicator:
         }
         self._make_request('post', url, headers=headers, json=data)
 
-    def create_post(self, title, content):
+    def create_post(self, community_id, name, **kwargs):
+        """Create a post in a specified community."""
         url = f'https://{self.server}/api/v3/post'
         headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
         data = {
-            'community_id': self.community_id,
-            'name': title,
-            'body': content
+            'community_id': community_id,
+            'name': name
         }
+        # Adding optional parameters
+        for key, value in kwargs.items():
+            if value is not None:
+                data[key] = value
+
         response = self._make_request('post', url, headers=headers, json=data)
         return response.json()['post_view']['post']
+
+    def create_community(self, name, title, **kwargs):
+        """Create a new community."""
+        url = f'https://{self.server}/api/v3/community'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        data = {
+            'name': name,
+            'title': title
+        }
+        # Adding optional parameters
+        for key, value in kwargs.items():
+            if value is not None:
+                data[key] = value
+        print(data)
+
+        response = self._make_request('post', url, headers=headers, json=data)
+        return response.json()['community_view']['community']
 
     def create_comment(self, post_id, content):
         url = f'https://{self.server}/api/v3/comment'
@@ -225,52 +198,3 @@ class LemmyCommunicator:
                 break
             if banlist.get(user_id) == (True, True, True):
                 print(f"Recent post by banned user {user_id}: {post_id}")
-
-    def fetch_recent_comments(self):
-        page = 1
-        while True:
-            url = f'https://{self.server}/api/v3/comment/list'
-            headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
-            params = {
-                'type_': 'All',
-                'community_id': self.community_id,
-                'limit': 50,
-                'sort': 'New',
-                'page': page
-            }
-            try:
-                response = self._make_request('get', url, headers=headers, params=params)
-                response.raise_for_status()
-                comments = response.json().get('comments', [])
-                if not comments:
-                    break
-                for comment in comments:
-                    yield comment
-                page += 1
-            except requests.exceptions.RequestException as e:
-                print(f"Failed to fetch recent comments: {e}")
-                break
-
-    def fetch_recent_posts(self):
-        page = 1
-        while True:
-            url = f'https://{self.server}/api/v3/post/list'
-            headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
-            params = {
-                'community_id': self.community_id,
-                'limit': 50,
-                'sort': 'New',
-                'page': page
-            }
-            try:
-                response = self._make_request('get', url, headers=headers, params=params)
-                response.raise_for_status()
-                posts = response.json().get('posts', [])
-                if not posts:
-                    break
-                for post in posts:
-                    yield post
-                page += 1
-            except requests.exceptions.RequestException as e:
-                print(f"Failed to fetch recent posts: {e}")
-                break
