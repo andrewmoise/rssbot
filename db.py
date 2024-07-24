@@ -54,14 +54,23 @@ class RSSFeedDB:
             ''', (last_checked, process_id, feed_url))
             conn.commit()
 
-    def add_article(self, feed_id, article_url, headline, fetched_timestamp):
+    def get_article_by_url(self, article_url):
+        """Retrieve an article by its URL."""
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM rss_articles WHERE article_url = ?
+            ''', (article_url,))
+            return cursor.fetchone()
+
+    def add_article(self, feed_id, article_url, headline, fetched_timestamp, lemmy_post_id):
         """Add a new article related to a specific RSS feed."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO rss_articles (feed_id, article_url, headline, fetched_timestamp)
-                VALUES (?, ?, ?, ?)
-            ''', (feed_id, article_url, headline, fetched_timestamp))
+                INSERT OR IGNORE INTO rss_articles (feed_id, article_url, headline, fetched_timestamp, lemmy_post_id)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (feed_id, article_url, headline, fetched_timestamp, lemmy_post_id))
             conn.commit()
 
     def get_articles_by_feed(self, feed_id):
