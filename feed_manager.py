@@ -2,6 +2,7 @@ import argparse
 import feedparser
 from db import RSSFeedDB  # Import the RSSFeedDB class from your database handling module
 from lemmy import LemmyCommunicator  # Ensure you have this module set up to communicate with Lemmy
+from fetch_icons import fetch_high_res_icons, find_best_icon  # Ensure these are correctly imported
 
 def list_feeds(db):
     feeds = db.list_feeds()
@@ -18,7 +19,12 @@ def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod, create_commun
     # Extract feed details
     title = feed.feed.get('title', community_name)  # Use community_name as fallback
     description = feed.feed.get('description', '')
-    icon = feed.feed.get('image', {}).get('url', None)
+    default_icon = feed.feed.get('image', {}).get('url', None)
+
+    # Fetch and determine the best high-resolution icon
+    website_url = feed_url.split('/')[0] + '//' + feed_url.split('/')[2]  # Simplistic way to get base URL
+    icons = fetch_high_res_icons(website_url)
+    best_icon = find_best_icon(icons) or default_icon  # Use the best icon or the default if none found
 
     community_id = None
     if create_community:
@@ -26,7 +32,7 @@ def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod, create_commun
         community_details = {
             'title': title,
             'description': description,
-            'icon': icon,
+            'icon': best_icon,
             'posting_restricted_to_mods': True
         }
         community = lemmy_api.create_community(name=community_name, **community_details)
@@ -38,13 +44,14 @@ def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod, create_commun
     else:
         community_id = lemmy_api.fetch_community_id(community_name)
 
-    if appoint_mod:
-        lemmy_api.appoint_mod(community_id, 2)
+    if community_id:
+        if appoint_mod:
+            lemmy_api.appoint_mod(community_id, 2)
 
-    if create_db_entry:
-        db.add_feed(feed_url, community_name, community_id)
-        print(f"Added feed {feed_url} for community {community_name} with Lemmy ID {community_id}.")
-    elif not community_id:
+        if create_db_entry:
+            db.add_feed(feed_url, community_name, community_id)
+            print(f"Added feed {feed_url} for community {community_name} with Lemmy ID {community_id}.")
+    else:
         print("Skipped database entry due to failed community creation.")
 
 def delete_feed(db, feed_url):
