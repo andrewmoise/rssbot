@@ -1,15 +1,15 @@
 import argparse
 import feedparser
-from db import RSSFeedDB  # Import the RSSFeedDB class from your database handling module
-from lemmy import LemmyCommunicator  # Ensure you have this module set up to communicate with Lemmy
-from fetch_icons import fetch_high_res_icons, find_best_icon  # Ensure these are correctly imported
+from db import RSSFeedDB
+from lemmy import LemmyCommunicator
+from fetch_icons import fetch_high_res_icons, find_best_icon
 
 def list_feeds(db):
     feeds = db.list_feeds()
     for feed in feeds:
         print(f"Community: {feed[2]}, RSS URL: {feed[1]}")
 
-def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod, create_community, create_db_entry):
+def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod=True, create_community=True, create_db_entry=True):
     # Fetch and parse the RSS feed
     feed = feedparser.parse(feed_url)
     if not feed.entries:
@@ -69,7 +69,7 @@ def main():
 
     args = parser.parse_args()
 
-    db = RSSFeedDB('rss_feeds.db')
+    db = RSSFeedDB()
 
     if args.command == 'list':
         list_feeds(db)

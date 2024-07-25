@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import closing
 
 class RSSFeedDB:
-    def __init__(self, db_path):
+    def __init__(self, db_path='rss_feeds.db'):
         self.db_path = db_path
         self.init_db()
 
