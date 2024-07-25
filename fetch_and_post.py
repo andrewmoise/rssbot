@@ -13,7 +13,9 @@ def fetch_and_post():
         feed_url = feed[1]
         community_id = feed[3]
 
+        print(feed_url)
         rss = feedparser.parse(feed_url)
+        print('  done\n')
         current_time = datetime.now()
 
         for entry in rss.entries:
@@ -33,7 +35,7 @@ def fetch_and_post():
 
                 # Add the article to the database
                 db.add_article(feed_id, article_url, headline, current_time, lemmy_post_id)
-                print(f"Posted and added to DB: {headline}")
+                print(f"{feed_url}\n  {headline}\n")
 
 def main():
     fetch_and_post()
