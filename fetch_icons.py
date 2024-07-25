@@ -1,3 +1,4 @@
+import argparse
 import requests
 from bs4 import BeautifulSoup
 from PIL import Image
@@ -43,10 +44,18 @@ def find_best_icon(icons, size_threshold=150):
             print(f"Failed to process icon {icon_url}: {e}")
     return best_icon
 
+def main(urls):
+    for url in urls:
+        icons = fetch_high_res_icons(url)
+        best_icon = find_best_icon(icons)
+        print(f"The best icon for {url} is: {best_icon}")
+
 if __name__ == "__main__":
-    # Example usage
-    #url = 'https://nytimes.com/'
-    url = 'https://arstechnica.com/'
-    icons = fetch_high_res_icons(url)
-    best_icon = find_best_icon(icons)
-    print(f"The best icon is: {best_icon}")
+    parser = argparse.ArgumentParser(description="Fetch and determine the best high-resolution icon for given URLs.")
+    parser.add_argument('urls', nargs='+', help='One or more URLs to fetch icons from.')
+    args = parser.parse_args()
+    
+    if args.urls:
+        main(args.urls)
+    else:
+        parser.print_help()
