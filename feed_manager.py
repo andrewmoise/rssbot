@@ -22,7 +22,12 @@ def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod=True, create_c
     default_icon = feed.feed.get('image', {}).get('url', None)
 
     # Fetch and determine the best high-resolution icon
-    website_url = feed_url.split('/')[0] + '//' + feed_url.split('/')[2]  # Simplistic way to get base URL
+    domain = feed_url.split('/')[2].split('.')
+    website_url = feed_url.split('/')[0] + '//' + domain[-2] + '.' + domain[-1]
+
+    print(f"Website URL: {website_url}")
+
+    # Fetch and determine the best high-resolution icon
     icons = fetch_high_res_icons(website_url)
     best_icon = find_best_icon(icons) or default_icon  # Use the best icon or the default if none found
 
