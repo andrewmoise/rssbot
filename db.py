@@ -88,3 +88,14 @@ class RSSFeedDB:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM rss_feeds')
             return cursor.fetchall()
+
+    def remove_feed(self, community_name):
+        """Remove a feed based on the community name."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM rss_feeds WHERE community_name = ?
+            ''', (community_name,))
+            changes = conn.total_changes
+            conn.commit()
+        return changes  # Returns the number of rows deleted

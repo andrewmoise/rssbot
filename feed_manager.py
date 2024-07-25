@@ -59,9 +59,13 @@ def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod=True, create_c
     else:
         print("Skipped database entry due to failed community creation.")
 
-def delete_feed(db, feed_url):
-    db.remove_feed(feed_url)
-    print(f"Deleted feed {feed_url}.")
+def delete_feed(db, community_name):
+    """Delete a feed based on the community name."""
+    changes = db.remove_feed(community_name)
+    if changes > 0:
+        print(f"Deleted feed(s) for community '{community_name}'.")
+    else:
+        print(f"No feed found for community '{community_name}', no action taken.")
 
 def main():
     parser = argparse.ArgumentParser(description='Manage RSS feeds for Lemmy communities.')
@@ -85,7 +89,7 @@ def main():
         else:
             print("Missing arguments for add. Please provide a feed URL and community name.")
     elif args.command == 'delete':
-        if args.feed_url:
+        if args.feed_url: # Not really the feed URL
             delete_feed(db, args.feed_url)
         else:
             print("Missing argument for delete. Please provide a feed URL.")
