@@ -37,6 +37,8 @@ def fetch_and_post():
                 db.add_article(feed_id, article_url, headline, current_time, lemmy_post_id)
                 print(f"{feed_url}\n  {headline}\n")
 
+    print('All done!')
+                
 def main():
     fetch_and_post()
 
