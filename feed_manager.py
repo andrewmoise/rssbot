@@ -30,7 +30,8 @@ def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod=True, create_c
     # Fetch and determine the best high-resolution icon
     icons = fetch_high_res_icons(website_url)
     best_icon = find_best_icon(icons) or default_icon  # Use the best icon or the default if none found
-
+    #best_icon = default_icon
+    
     community_id = None
     if create_community:
         # Create the community in Lemmy
@@ -67,14 +68,19 @@ def delete_feed(db, community_name):
     else:
         print(f"No feed found for community '{community_name}', no action taken.")
 
+def update_feed(db, community_name, new_feed_url):
+    """Update the feed URL for a given community name."""
+    db.update_feed_url(community_name, new_feed_url)
+    print(f"Updated feed URL for community '{community_name}' to '{new_feed_url}'.")
+
 def main():
     parser = argparse.ArgumentParser(description='Manage RSS feeds for Lemmy communities.')
     parser.add_argument('-na', '--no-appoint-mod', action='store_true', help='Do not appoint the admin mod after creating the community')
     parser.add_argument('-nc', '--no-create-community', action='store_true', help='Do not create the community in Lemmy')
     parser.add_argument('-ndb', '--no-database-entry', action='store_true', help='Do not create the database entry')
-    parser.add_argument('command', choices=['list', 'add', 'delete'], help='Command to execute')
+    parser.add_argument('command', choices=['list', 'add', 'delete', 'update'], help='Command to execute')
     parser.add_argument('feed_url', nargs='?', help='The URL of the RSS feed.')
-    parser.add_argument('community_name', nargs='?', help='The name of the Lemmy community for add command.')
+    parser.add_argument('community_name', nargs='?', help='The name of the Lemmy community for add or update commands.')
 
     args = parser.parse_args()
 
@@ -92,7 +98,12 @@ def main():
         if args.feed_url: # Not really the feed URL
             delete_feed(db, args.feed_url)
         else:
-            print("Missing argument for delete. Please provide a feed URL.")
+            print("Missing argument for delete. Please provide a community name.")
+    elif args.command == 'update':
+        if args.feed_url and args.community_name:
+            update_feed(db, args.community_name, args.feed_url)
+        else:
+            print("Missing arguments for update. Please provide a feed URL and community name.")
     else:
         parser.print_help()
 

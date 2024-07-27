@@ -43,16 +43,25 @@ class RSSFeedDB:
             ''', (feed_url, community_name, community_id))
             conn.commit()
 
-    def update_feed(self, feed_url, last_checked, process_id=None):
-        """Update details of an existing RSS feed."""
+    def update_feed_url(self, community_name, new_feed_url):
+        """Update the feed URL for a given community name."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                UPDATE rss_feeds
-                SET last_checked = ?, process_id = ?
-                WHERE feed_url = ?
-            ''', (last_checked, process_id, feed_url))
-            conn.commit()
+                SELECT COUNT(*) FROM rss_feeds WHERE community_name = ?
+            ''', (community_name,))
+            count = cursor.fetchone()[0]
+            if count == 1:
+                cursor.execute('''
+                    UPDATE rss_feeds
+                    SET feed_url = ?
+                    WHERE community_name = ?
+                ''', (new_feed_url, community_name))
+                conn.commit()
+            elif count > 1:
+                raise ValueError(f"Multiple entries found for community name '{community_name}'. Update operation aborted.")
+            else:
+                raise ValueError(f"No entry found for community name '{community_name}'. Update operation aborted.")
 
     def get_article_by_url(self, article_url):
         """Retrieve an article by its URL."""
