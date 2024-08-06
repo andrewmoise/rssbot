@@ -1,6 +1,7 @@
+import argparse
 import feedparser
 from datetime import datetime, timedelta, timezone
-from dateutil import parser  # Import the parser module from dateutil
+from dateutil import parser
 import requests
 
 from db import RSSFeedDB
@@ -8,7 +9,7 @@ from lemmy import LemmyCommunicator
 
 headers = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
 
-def fetch_and_post():
+def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
     lemmy_api = LemmyCommunicator()
 
@@ -16,7 +17,12 @@ def fetch_and_post():
     for feed in feeds:
         feed_id = feed[0]
         feed_url = feed[1]
+        community_name = feed[2]
         community_id = feed[3]
+
+        # Skip feeds not in the community filter
+        if community_filter and community_name not in community_filter:
+            continue
 
         print(feed_url)
         try:
@@ -29,7 +35,7 @@ def fetch_and_post():
         print('  done\n')
         current_time = datetime.now(timezone.utc)  # Make current_time offset-aware by specifying UTC
 
-        time_limit = current_time - timedelta(days=2)  # This remains offset-aware
+        time_limit = current_time - timedelta(days=3)  # This remains offset-aware
 
         for entry in rss.entries:
             if hasattr(entry, 'published'):
@@ -78,8 +84,16 @@ def fetch_and_post():
     print('All done!')
 
 def main():
-    fetch_and_post()
+    parser = argparse.ArgumentParser(description='Fetch and post RSS feeds to Lemmy.')
+    parser.add_argument('-c', '--communities', type=str, help='Comma-separated list of community IDs to update')
+
+    args = parser.parse_args()
+
+    community_filter = None
+    if args.communities:
+        community_filter = args.communities.split(',')
+
+    fetch_and_post(community_filter)
 
 if __name__ == "__main__":
     main()
-
