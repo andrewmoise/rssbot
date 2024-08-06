@@ -1,8 +1,12 @@
 import feedparser
 from datetime import datetime, timedelta, timezone
 from dateutil import parser  # Import the parser module from dateutil
-from lemmy import LemmyCommunicator
+import requests
+
 from db import RSSFeedDB
+from lemmy import LemmyCommunicator
+
+headers = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
 
 def fetch_and_post():
     db = RSSFeedDB('rss_feeds.db')
@@ -15,7 +19,13 @@ def fetch_and_post():
         community_id = feed[3]
 
         print(feed_url)
-        rss = feedparser.parse(feed_url)
+        try:
+            response = requests.get(feed_url, headers=headers, timeout=30)
+            rss = feedparser.parse(response.content)
+        except:
+            print('  EXCEPTION!')
+            continue
+        
         print('  done\n')
         current_time = datetime.now(timezone.utc)  # Make current_time offset-aware by specifying UTC
 
@@ -44,18 +54,26 @@ def fetch_and_post():
                 print(f"  Time exceeded: {published_date} > {time_limit}")
                 continue
 
-            # Post the article to Lemmy
-            post = lemmy_api.create_post(
-                community_id=community_id,
-                name=headline,
-                url=article_url
-            )
-            lemmy_post_id = post['id'] if post else None
+            print(f"{headline} link {article_url} to {feed_url}")
 
+            # Post the article to Lemmy
+            try:
+                post = lemmy_api.create_post(
+                    community_id=community_id,
+                    name=headline,
+                    url=article_url
+                )
+                lemmy_post_id = post['id'] if post else None
+            except:
+                print("  EXCEPTION")
+                continue
+                
             # Add the article to the database
             if lemmy_post_id:
                 db.add_article(feed_id, article_url, headline, current_time, lemmy_post_id)
-                print(f"Posted: {headline} at {feed_url}")
+                print(f"  posted! {lemmy_post_id}\n")
+            else:
+                print("  COULD NOT POST")
 
     print('All done!')
 
