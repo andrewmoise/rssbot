@@ -105,6 +105,9 @@ class RSSFeedDB:
             cursor.execute('''
                 DELETE FROM rss_feeds WHERE community_name = ?
             ''', (community_name,))
+            cursor.execute('''
+                DELETE FROM rss_feeds WHERE feed_url = ?
+            ''', (community_name,))
             changes = conn.total_changes
             conn.commit()
         return changes  # Returns the number of rows deleted
