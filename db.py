@@ -1,5 +1,6 @@
 import sqlite3
 from contextlib import closing
+from datetime import datetime
 
 class RSSFeedDB:
     def __init__(self, db_path='rss_feeds.db'):
@@ -16,8 +17,8 @@ class RSSFeedDB:
                     feed_url TEXT UNIQUE,
                     community_name TEXT,
                     community_id INTEGER,
-                    last_checked TIMESTAMP,
-                    process_id INTEGER
+                    last_updated TIMESTAMP,
+                    next_check TIMESTAMP
                 )
             ''')
             cursor.execute('''
@@ -33,14 +34,25 @@ class RSSFeedDB:
             ''')
             conn.commit()
 
-    def add_feed(self, feed_url, community_name, community_id):
+    def add_feed(self, feed_url, community_name, community_id, last_updated=None, next_check=None):
         """Add a new RSS feed to the database."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id)
-                VALUES (?, ?, ?)
-            ''', (feed_url, community_name, community_id))
+                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id, last_updated, next_check)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (feed_url, community_name, community_id, last_updated, next_check))
+            conn.commit()
+
+    def update_feed_timestamps(self, feed_id, last_updated, next_check):
+        """Update the last_updated and next_check timestamps for a given feed."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE rss_feeds
+                SET last_updated = ?, next_check = ?
+                WHERE id = ?
+            ''', (last_updated, next_check, feed_id))
             conn.commit()
 
     def update_feed_url(self, community_name, new_feed_url):
@@ -111,3 +123,48 @@ class RSSFeedDB:
             changes = conn.total_changes
             conn.commit()
         return changes  # Returns the number of rows deleted
+
+def migrate_database():
+    """Migrate the database to the new structure."""
+    db_path = 'rss_feeds.db'
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        
+        # Check if the old columns exist
+        cursor.execute("PRAGMA table_info(rss_feeds)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        if 'last_checked' in columns or 'process_id' in columns:
+            # Create a temporary table with the new structure
+            cursor.execute('''
+                CREATE TABLE rss_feeds_new (
+                    id INTEGER PRIMARY KEY,
+                    feed_url TEXT UNIQUE,
+                    community_name TEXT,
+                    community_id INTEGER,
+                    last_updated TIMESTAMP,
+                    next_check TIMESTAMP
+                )
+            ''')
+            
+            # Copy data from the old table to the new one
+            cursor.execute('''
+                INSERT INTO rss_feeds_new (id, feed_url, community_name, community_id)
+                SELECT id, feed_url, community_name, community_id FROM rss_feeds
+            ''')
+            
+            # Drop the old table and rename the new one
+            cursor.execute('DROP TABLE rss_feeds')
+            cursor.execute('ALTER TABLE rss_feeds_new RENAME TO rss_feeds')
+            
+            print("Database migration completed successfully.")
+        else:
+            print("Database is already in the new structure. No migration needed.")
+        
+        conn.commit()
+
+def main():
+    migrate_database()
+
+if __name__ == "__main__":
+    main()
