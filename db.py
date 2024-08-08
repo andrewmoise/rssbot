@@ -17,7 +17,7 @@ class RSSFeedDB:
                     feed_url TEXT UNIQUE,
                     community_name TEXT,
                     community_id INTEGER,
-                    last_updated TIMESTAMP,
+                    last_updated_header TEXT,
                     next_check TIMESTAMP
                 )
             ''')
@@ -34,25 +34,25 @@ class RSSFeedDB:
             ''')
             conn.commit()
 
-    def add_feed(self, feed_url, community_name, community_id, last_updated=None, next_check=None):
+    def add_feed(self, feed_url, community_name, community_id, last_updated_header=None, next_check=None):
         """Add a new RSS feed to the database."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id, last_updated, next_check)
+                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id, last_updated_header, next_check)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (feed_url, community_name, community_id, last_updated, next_check))
+            ''', (feed_url, community_name, community_id, last_updated_header, next_check))
             conn.commit()
 
-    def update_feed_timestamps(self, feed_id, last_updated, next_check):
-        """Update the last_updated and next_check timestamps for a given feed."""
+    def update_feed_timestamps(self, feed_id, last_updated_header, next_check):
+        """Update the last_updated_header and next_check timestamps for a given feed."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE rss_feeds
-                SET last_updated = ?, next_check = ?
+                SET last_updated_header = ?, next_check = ?
                 WHERE id = ?
-            ''', (last_updated, next_check, feed_id))
+            ''', (last_updated_header, next_check, feed_id))
             conn.commit()
 
     def update_feed_url(self, community_name, new_feed_url):
@@ -125,37 +125,23 @@ class RSSFeedDB:
         return changes  # Returns the number of rows deleted
 
 def migrate_database():
-    """Migrate the database to the new structure."""
+    """Migrate the database to the new structure with last_updated_header."""
     db_path = 'rss_feeds.db'
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         
-        # Check if the old columns exist
+        # Check if the old column exists
         cursor.execute("PRAGMA table_info(rss_feeds)")
         columns = [column[1] for column in cursor.fetchall()]
         
-        if 'last_checked' in columns or 'process_id' in columns:
-            # Create a temporary table with the new structure
-            cursor.execute('''
-                CREATE TABLE rss_feeds_new (
-                    id INTEGER PRIMARY KEY,
-                    feed_url TEXT UNIQUE,
-                    community_name TEXT,
-                    community_id INTEGER,
-                    last_updated TIMESTAMP,
-                    next_check TIMESTAMP
-                )
-            ''')
+        if 'last_updated' in columns and 'last_updated_header' not in columns:
+            # Rename the existing last_updated column to last_updated_header
+            cursor.execute('ALTER TABLE rss_feeds RENAME COLUMN last_updated TO last_updated_header')
             
-            # Copy data from the old table to the new one
-            cursor.execute('''
-                INSERT INTO rss_feeds_new (id, feed_url, community_name, community_id)
-                SELECT id, feed_url, community_name, community_id FROM rss_feeds
-            ''')
-            
-            # Drop the old table and rename the new one
-            cursor.execute('DROP TABLE rss_feeds')
-            cursor.execute('ALTER TABLE rss_feeds_new RENAME TO rss_feeds')
+            print("Database migration completed successfully.")
+        elif 'last_updated_header' not in columns:
+            # If last_updated_header doesn't exist, add it
+            cursor.execute('ALTER TABLE rss_feeds ADD COLUMN last_updated_header TEXT')
             
             print("Database migration completed successfully.")
         else:

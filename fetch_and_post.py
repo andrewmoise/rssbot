@@ -53,7 +53,7 @@ def get_feed_update_period(entries, current_time):
     latest = current_time
     earliest = min(dates)
     
-    update_period = (latest - earliest) / len(dates) * 2
+    update_period = (latest - earliest) / len(dates)
     return min(update_period, timedelta(hours=MAX_DELAY))
 
 def fetch_and_post(community_filter=None):
@@ -90,7 +90,8 @@ def fetch_and_post(community_filter=None):
                 logger.info(f"Feed not modified since last check: {feed_url}")
                 # Update next_check time
                 if last_updated and next_check:
-                    update_period = min(next_check - last_updated, timedelta(hours=MAX_DELAY))
+                    next_check_dt = parser.parse(next_check).replace(tzinfo=timezone.utc)
+                    update_period = min(next_check_dt - last_updated_dt, timedelta(hours=MAX_DELAY))
                 else:
                     update_period = timedelta(hours=MAX_DELAY)
                 next_check_time = current_time + update_period
