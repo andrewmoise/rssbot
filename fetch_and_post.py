@@ -3,11 +3,39 @@ import feedparser
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 import requests
+import logging
 
 from db import RSSFeedDB
 from lemmy import LemmyCommunicator
 
 headers = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
+
+def setup_logging():
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # File handlers
+    file_handler = logging.FileHandler('rssbot.log')
+    file_handler.setLevel(logging.DEBUG)
+    error_handler = logging.FileHandler('error.log')
+    error_handler.setLevel(logging.ERROR)
+
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+    error_handler.setFormatter(formatter)
+
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    logger.addHandler(error_handler)
+
+    return logger
+
+logger = setup_logging()
 
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
@@ -15,37 +43,32 @@ def fetch_and_post(community_filter=None):
 
     feeds = db.list_feeds()
     for feed in feeds:
-        feed_id = feed[0]
-        feed_url = feed[1]
-        community_name = feed[2]
-        community_id = feed[3]
+        feed_id, feed_url, community_name, community_id, _, _ = feed
 
         # Skip feeds not in the community filter
         if community_filter and community_name not in community_filter:
             continue
 
-        print(feed_url)
+        logger.info(feed_url)
         try:
             response = requests.get(feed_url, headers=headers, timeout=30)
             rss = feedparser.parse(response.content)
-        except:
-            print('  EXCEPTION!')
+        except Exception as e:
+            logger.error(f"Exception while fetching feed {feed_url}: {str(e)}")
             continue
         
-        print('  done\n')
-        current_time = datetime.now(timezone.utc)  # Make current_time offset-aware by specifying UTC
-
-        time_limit = current_time - timedelta(days=3)  # This remains offset-aware
+        logger.info('Feed fetched successfully')
+        current_time = datetime.now(timezone.utc)
+        time_limit = current_time - timedelta(days=3)
 
         for entry in rss.entries:
             if hasattr(entry, 'published'):
                 try:
                     published_date = parser.parse(entry.published)
-                    # Ensure the date is offset-aware
                     if published_date.tzinfo is None or published_date.tzinfo.utcoffset(published_date) is None:
                         published_date = published_date.replace(tzinfo=timezone.utc)
                 except ValueError as e:
-                    print(f"Date parsing error: {e} for date string: {entry.published}")
+                    logger.error(f"Date parsing error: {e} for date string: {entry.published}")
                     continue
             else:
                 published_date = current_time
@@ -54,15 +77,15 @@ def fetch_and_post(community_filter=None):
             headline = entry.title
 
             if db.get_article_by_url(article_url):
-                continue # Article already exists
-
-            if published_date < time_limit:
-                print(f"  Time exceeded: {published_date} > {time_limit}")
+                logger.debug(f"Article already exists: {article_url}")
                 continue
 
-            print(f"{headline} link {article_url} to {feed_url}")
+            if published_date < time_limit:
+                logger.debug(f"Time exceeded: {published_date} > {time_limit}")
+                continue
 
-            # Post the article to Lemmy
+            logger.info(f"Posting: {headline} link {article_url} to {feed_url}")
+
             try:
                 post = lemmy_api.create_post(
                     community_id=community_id,
@@ -70,18 +93,17 @@ def fetch_and_post(community_filter=None):
                     url=article_url
                 )
                 lemmy_post_id = post['id'] if post else None
-            except:
-                print("  EXCEPTION")
+            except Exception as e:
+                logger.error(f"Exception while posting to Lemmy: {str(e)}")
                 continue
                 
-            # Add the article to the database
             if lemmy_post_id:
                 db.add_article(feed_id, article_url, headline, current_time, lemmy_post_id)
-                print(f"  posted! {lemmy_post_id}\n")
+                logger.info(f"Posted successfully! Lemmy post ID: {lemmy_post_id}")
             else:
-                print("  COULD NOT POST")
+                logger.warning("Could not post to Lemmy")
 
-    print('All done!')
+    logger.info('All done!')
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch and post RSS feeds to Lemmy.')
@@ -89,9 +111,7 @@ def main():
 
     args = parser.parse_args()
 
-    community_filter = None
-    if args.communities:
-        community_filter = args.communities.split(',')
+    community_filter = args.communities.split(',') if args.communities else None
 
     fetch_and_post(community_filter)
 
