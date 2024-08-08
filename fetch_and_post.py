@@ -10,7 +10,7 @@ from db import RSSFeedDB
 from lemmy import LemmyCommunicator
 
 ORIG_HEADERS = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
-MAX_DELAY = 1
+MAX_DELAY = 90
 
 def setup_logging():
     logger = logging.getLogger()
@@ -41,12 +41,12 @@ logger = setup_logging()
 
 def get_feed_update_period(entries, current_time):
     if not entries:
-        return timedelta(hours=MAX_DELAY)
+        return timedelta(minutes=MAX_DELAY)
     
     dates = [parser.parse(entry.get('published', entry.get('updated'))) for entry in entries if entry.get('published') or entry.get('updated')]
     
     if not dates:
-        return timedelta(hours=MAX_DELAY)
+        return timedelta(minutes=MAX_DELAY)
     
     dates = [d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d for d in dates]
     
@@ -54,7 +54,7 @@ def get_feed_update_period(entries, current_time):
     earliest = min(dates)
     
     update_period = (latest - earliest) / len(dates)
-    return min(update_period, timedelta(hours=MAX_DELAY))
+    return min(update_period, timedelta(minutes=MAX_DELAY))
 
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
@@ -91,9 +91,9 @@ def fetch_and_post(community_filter=None):
                 # Update next_check time
                 if last_updated and next_check:
                     next_check_dt = parser.parse(next_check).replace(tzinfo=timezone.utc)
-                    update_period = min(next_check_dt - last_updated_dt, timedelta(hours=MAX_DELAY))
+                    update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_DELAY))
                 else:
-                    update_period = timedelta(hours=MAX_DELAY)
+                    update_period = timedelta(minutes=MAX_DELAY)
                 next_check_time = current_time + update_period
                 db.update_feed_timestamps(feed_id, last_updated_dt, next_check_time)
                 continue
@@ -151,7 +151,7 @@ def fetch_and_post(community_filter=None):
                 logger.debug(f"Time exceeded: {published_date} > {time_limit}")
                 continue
 
-            logger.info(f"Posting: {headline} link {article_url} to {feed_url}")
+            logger.info(f"Posting: {headline} link {article_url} to {community_name}")
 
             try:
                 post = lemmy_api.create_post(
