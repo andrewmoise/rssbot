@@ -10,6 +10,7 @@ from db import RSSFeedDB
 from lemmy import LemmyCommunicator
 
 ORIG_HEADERS = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
+#ORIG_HEADERS = {'User-Agent': 'Wget/1.20.3 (linux-gnu)'}
 MAX_DELAY = 90
 
 def setup_logging():
@@ -43,18 +44,23 @@ def get_feed_update_period(entries, current_time):
     if not entries:
         return timedelta(minutes=MAX_DELAY)
     
-    dates = [parser.parse(entry.get('published', entry.get('updated'))) for entry in entries if entry.get('published') or entry.get('updated')]
+    dates = [parse_date_with_timezone(entry.get('published', entry.get('updated'))) for entry in entries if entry.get('published') or entry.get('updated')]
     
     if not dates:
         return timedelta(minutes=MAX_DELAY)
-    
-    dates = [d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d for d in dates]
     
     latest = current_time
     earliest = min(dates)
     
     update_period = (latest - earliest) / len(dates)
     return min(update_period, timedelta(minutes=MAX_DELAY))
+
+def parse_date_with_timezone(date_str):
+    parsed_date = parser.parse(date_str)
+    if parsed_date.tzinfo is None:
+        logger.warning(f"Date without timezone info: {date_str}. Assuming UTC.")
+        return parsed_date.replace(tzinfo=timezone.utc)
+    return parsed_date.astimezone(timezone.utc)
 
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
@@ -72,13 +78,14 @@ def fetch_and_post(community_filter=None):
                 continue
 
             # Check if next_check is in the future
-            if next_check and parser.parse(next_check).replace(tzinfo=timezone.utc) > current_time:
+            if next_check and parse_date_with_timezone(next_check) > current_time:
                 logger.debug(f"Skipping feed {feed_url} as next_check is in the future")
                 continue
 
             # Prepare headers with If-Modified-Since
             request_headers = ORIG_HEADERS.copy()
-            if last_updated:
+            if last_updated is not None:
+                logger.debug(f"IMS header: {last_updated}")
                 request_headers['If-Modified-Since'] = last_updated
 
             logger.info(f"Processing feed: {feed_url}")
@@ -89,14 +96,15 @@ def fetch_and_post(community_filter=None):
                     logger.info(f"Feed not modified since last check: {feed_url}")
                     # Update next_check time
                     if last_updated and next_check:
-                        last_updated_dt = parser.parse(last_updated)
-                        next_check_dt = parser.parse(next_check)
-                        update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_DELAY))
+                        #last_updated_dt = parser.parse(last_updated)
+                        next_check_dt = parse_date_with_timezone(next_check)
+                        update_period = min(datetime.now() - next_check_dt, timedelta(minutes=MAX_DELAY))
+                        #update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_DELAY))
                     else:
                         update_period = timedelta(minutes=MAX_DELAY)
 
                     next_check_time = current_time + update_period
-                    db.update_feed_timestamps(feed_id, last_updated_dt, next_check_time)
+                    db.update_feed_timestamps(feed_id, last_updated, next_check_time)
                     continue
 
                 response.raise_for_status()
@@ -111,7 +119,7 @@ def fetch_and_post(community_filter=None):
             # Get feed update timestamp
             feed_updated = rss.feed.get('updated_parsed') or rss.feed.get('published_parsed')
             if feed_updated:
-                feed_last_updated = datetime(*feed_updated[:6], tzinfo=timezone.utc)
+                feed_last_updated = datetime(*feed_updated[:6])
             else:
                 feed_last_updated = current_time
 
@@ -132,9 +140,9 @@ def fetch_and_post(community_filter=None):
             for entry in rss.entries:
                 if hasattr(entry, 'published'):
                     try:
-                        published_date = parser.parse(entry.published)
-                        if published_date.tzinfo is None or published_date.tzinfo.utcoffset(published_date) is None:
-                            published_date = published_date.replace(tzinfo=timezone.utc)
+                        published_date = parse_date_with_timezone(entry.published)
+                        #if published_date.tzinfo is None or published_date.tzinfo.utcoffset(published_date) is None:
+                        #    published_date = published_date.replace(tzinfo=timezone.utc)
                     except ValueError as e:
                         logger.error(f"Date parsing error: {e} for date string: {entry.published}")
                         continue
@@ -173,11 +181,11 @@ def fetch_and_post(community_filter=None):
 
         # Sleep until the nearest next_check time
         delay = 60
-        next_check_times = [parser.parse(feed[5]) for feed in feeds if feed[5]]
+        next_check_times = [parse_date_with_timezone(feed[5]) for feed in feeds if feed[5]]
         if next_check_times:
             next_check_time = min(next_check_times)
-            if next_check_time > current_time:
-                delay = (next_check_time - current_time).total_seconds()
+            delay = max(delay, (next_check_time - current_time).total_seconds())
+
         logger.info(f"Sleeping for {delay} seconds until next check time.")
         time.sleep(delay)
 
