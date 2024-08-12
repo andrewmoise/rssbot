@@ -62,14 +62,40 @@ def parse_date_with_timezone(date_str):
         return parsed_date.replace(tzinfo=timezone.utc)
     return parsed_date.astimezone(timezone.utc)
 
+def set_backoff_next_check(db, feed):
+    feed_id, feed_url, community_name, community_id, last_updated, next_check = feed
+
+    # Update next_check time
+    if last_updated:
+        last_updated_dt = parse_date_with_timezone(last_updated)
+        #next_check_dt = parse_date_with_timezone(next_check)
+        update_period = min(datetime.now(timezone.utc) - last_updated_dt, timedelta(minutes=MAX_DELAY))
+        #update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_DELAY))
+    else:
+        update_period = timedelta(minutes=MAX_DELAY)
+
+    next_check_time = datetime.now(timezone.utc) + update_period
+    db.update_feed_timestamps(feed_id, last_updated, next_check_time)
+    
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
     lemmy_api = LemmyCommunicator()
 
+    delay = 0 # First time through, no delay
+    
     while True:
         feeds = db.list_feeds()
-        current_time = datetime.now(timezone.utc)
 
+        # Sleep until the nearest next_check time
+        next_check_times = [parse_date_with_timezone(feed[5]) for feed in feeds if feed[5]]
+        if next_check_times:
+            next_check_time = min(next_check_times)
+            delay = int(max(delay, (next_check_time - datetime.now(timezone.utc)).total_seconds()))
+
+        logger.info(f"Sleeping for {delay} seconds until next check time.")
+        time.sleep(delay+1)
+        delay = 60 # Next time through, sleep at least 1 minute
+        
         for feed in feeds:
             feed_id, feed_url, community_name, community_id, last_updated, next_check = feed
 
@@ -78,7 +104,7 @@ def fetch_and_post(community_filter=None):
                 continue
 
             # Check if next_check is in the future
-            if next_check and parse_date_with_timezone(next_check) > current_time:
+            if next_check and parse_date_with_timezone(next_check) > datetime.now(timezone.utc):
                 logger.debug(f"Skipping feed {feed_url} as next_check is in the future")
                 continue
 
@@ -93,18 +119,8 @@ def fetch_and_post(community_filter=None):
                 response = requests.get(feed_url, headers=request_headers, timeout=30)
 
                 if response.status_code == 304:
-                    logger.info(f"Feed not modified since last check: {feed_url}")
-                    # Update next_check time
-                    if last_updated and next_check:
-                        #last_updated_dt = parser.parse(last_updated)
-                        next_check_dt = parse_date_with_timezone(next_check)
-                        update_period = min(datetime.now() - next_check_dt, timedelta(minutes=MAX_DELAY))
-                        #update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_DELAY))
-                    else:
-                        update_period = timedelta(minutes=MAX_DELAY)
-
-                    next_check_time = current_time + update_period
-                    db.update_feed_timestamps(feed_id, last_updated, next_check_time)
+                    logger.info(f"  Not modified since last check")
+                    set_backoff_next_check(db, feed)
                     continue
 
                 response.raise_for_status()
@@ -112,30 +128,30 @@ def fetch_and_post(community_filter=None):
                 rss = feedparser.parse(response.content)
             except Exception as e:
                 logger.error(f"Exception while fetching feed {feed_url}: {str(e)}")
+                set_backoff_next_check(db, feed)
                 continue
             
-            logger.info('Feed fetched successfully')
+            logger.debug('  Feed fetched successfully')
 
             # Get feed update timestamp
             feed_updated = rss.feed.get('updated_parsed') or rss.feed.get('published_parsed')
             if feed_updated:
                 feed_last_updated = datetime(*feed_updated[:6])
             else:
-                feed_last_updated = current_time
+                feed_last_updated = datetime.now(timezone.utc)
 
             # Calculate update period
-            update_period = get_feed_update_period(rss.entries, current_time)
-            next_check_time = current_time + update_period
+            update_period = get_feed_update_period(rss.entries, datetime.now(timezone.utc))
+            next_check_time = datetime.now(timezone.utc) + update_period
 
             # Update feed timestamps
             db.update_feed_timestamps(feed_id, feed_last_updated, next_check_time)
 
-            logger.info(f"Feed: {feed_url}")
-            logger.info(f"Last updated: {feed_last_updated}")
-            logger.info(f"Update period: {update_period}")
-            logger.info(f"Next check: {next_check_time}")
+            logger.debug(f"  Last updated: {feed_last_updated}")
+            logger.debug(f"  Update period: {update_period}")
+            logger.debug(f"  Next check: {next_check_time}")
 
-            time_limit = current_time - timedelta(days=3)
+            time_limit = datetime.now(timezone.utc) - timedelta(days=3)
 
             for entry in rss.entries:
                 if hasattr(entry, 'published'):
@@ -147,7 +163,7 @@ def fetch_and_post(community_filter=None):
                         logger.error(f"Date parsing error: {e} for date string: {entry.published}")
                         continue
                 else:
-                    published_date = current_time
+                    published_date = datetime.now(timezone.utc)
 
                 article_url = entry.link
                 headline = entry.title
@@ -160,7 +176,8 @@ def fetch_and_post(community_filter=None):
                     logger.debug(f"Time exceeded: {published_date} > {time_limit}")
                     continue
 
-                logger.info(f"Posting: {headline} link {article_url} to {community_name}")
+                logger.debug(f"  Posting: {headline}")
+                logger.debug("    to {community_name}")
 
                 try:
                     post = lemmy_api.create_post(
@@ -174,20 +191,10 @@ def fetch_and_post(community_filter=None):
                     continue
                     
                 if lemmy_post_id:
-                    db.add_article(feed_id, article_url, headline, current_time, lemmy_post_id)
-                    logger.info(f"Posted successfully! Lemmy post ID: {lemmy_post_id}")
+                    db.add_article(feed_id, article_url, headline, datetime.now(timezone.utc), lemmy_post_id)
+                    logger.debug(f"  Posted successfully! Lemmy post ID: {lemmy_post_id}")
                 else:
                     logger.warning("Could not post to Lemmy")
-
-        # Sleep until the nearest next_check time
-        delay = 60
-        next_check_times = [parse_date_with_timezone(feed[5]) for feed in feeds if feed[5]]
-        if next_check_times:
-            next_check_time = min(next_check_times)
-            delay = max(delay, (next_check_time - current_time).total_seconds())
-
-        logger.info(f"Sleeping for {delay} seconds until next check time.")
-        time.sleep(delay)
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch and post RSS feeds to Lemmy.')
