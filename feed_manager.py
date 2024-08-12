@@ -7,7 +7,9 @@ from fetch_icons import fetch_high_res_icons, find_best_icon
 def list_feeds(db):
     feeds = db.list_feeds()
     for feed in feeds:
-        print(f"Community: {feed[2]}, RSS URL: {feed[1]}")
+        print(feed[0])
+        for token in feed[1:]:
+            print(f"  {token}")
 
 def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod=True, create_community=True, create_db_entry=True):
     # Fetch and parse the RSS feed
