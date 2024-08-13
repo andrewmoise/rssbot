@@ -13,8 +13,8 @@ from lemmy import LemmyCommunicator
 ORIG_HEADERS = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
 #ORIG_HEADERS = {'User-Agent': 'Wget/1.20.3 (linux-gnu)'}
 
-MAX_FETCH_DELAY = 180  # Max time between hits to a given RSS feed, in minutes
-POST_DELAY = 5         # Min time between posts from a single RSS feed, in minutes
+MAX_FETCH_DELAY = 2*60  # Max time between hits to each RSS feed, in minutes
+POST_DELAY = 5          # Min time between multiple posts from a single RSS feed, in minutes
 
 def setup_logging():
     logger = logging.getLogger()
@@ -43,20 +43,37 @@ def setup_logging():
 
 logger = setup_logging()
 
-def get_feed_update_period(entries, current_time):
-    if not entries:
+def get_feed_update_period(entries):
+    burst_begin = None
+    burst_total = timedelta()
+    burst_count = 0
+
+    for entry in entries:
+        timestamp = entry.get('published', entry.get('updated'))
+        if timestamp is None:
+            continue
+        timestamp = parse_date_with_timezone(timestamp)
+
+        if burst_begin is None:
+            burst_begin = timestamp
+            continue
+
+        time_diff = abs(timestamp - burst_begin)
+        if time_diff < timedelta(minutes=POST_DELAY):
+            continue
+
+        logger.debug(f"  Adding {time_diff} to total")
+
+        burst_total += time_diff
+        burst_count += 1
+        burst_begin = timestamp
+
+    logger.debug(f"  Total time {burst_total} over {burst_count} bursts")
+
+    if burst_count >= 1:
+        return burst_total / burst_count
+    else:
         return timedelta(minutes=MAX_FETCH_DELAY)
-    
-    dates = [parse_date_with_timezone(entry.get('published', entry.get('updated'))) for entry in entries if entry.get('published') or entry.get('updated')]
-    
-    if not dates:
-        return timedelta(minutes=MAX_FETCH_DELAY)
-    
-    latest = current_time
-    earliest = min(dates)
-    
-    update_period = (latest - earliest) / len(dates)
-    return min(update_period, timedelta(minutes=MAX_FETCH_DELAY))
 
 def parse_date_with_timezone(date_str):
     parsed_date = dateparser.parse(date_str, settings={
@@ -115,7 +132,7 @@ def fetch_and_post(community_filter=None):
 
             # Check if next_check is in the future
             if next_check and parse_date_with_timezone(next_check) > datetime.now(timezone.utc):
-                logger.debug(f"Skipping {feed_url} as next_check is in the future")
+                #logger.debug(f"Skipping {feed_url} as next_check is in the future")
                 continue
 
             # Skip feeds we've already hit the server for this time around
@@ -153,8 +170,8 @@ def fetch_and_post(community_filter=None):
             logger.debug('  Feed fetched successfully')
 
             # Calculate update period
-            update_period = get_feed_update_period(rss.entries, datetime.now(timezone.utc))
-            next_check_time = datetime.now(timezone.utc) + update_period
+            update_period = get_feed_update_period(rss.entries)
+            next_check_time = datetime.now(timezone.utc) + min(update_period, timedelta(minutes=MAX_FETCH_DELAY))
 
             # Update feed timestamps
             db.update_feed_timestamps(feed_id, last_updated, next_check_time)
@@ -166,7 +183,7 @@ def fetch_and_post(community_filter=None):
             time_limit = datetime.now(timezone.utc) - timedelta(days=3)
             hit_feed = False
 
-            for entry in rss.entries:
+            for entry in reversed(rss.entries):
                 if hasattr(entry, 'published'):
                     try:
                         published_date = parse_date_with_timezone(entry.published)
@@ -182,7 +199,7 @@ def fetch_and_post(community_filter=None):
                 headline = entry.title
 
                 if db.get_article_by_url(article_url):
-                    logger.debug(f"Article already exists: {article_url}")
+                    #logger.debug(f"Article already exists: {article_url}")
                     continue
 
                 if published_date < time_limit:
