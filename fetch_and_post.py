@@ -145,9 +145,9 @@ def fetch_and_post(community_filter=None):
             next_check_time = datetime.now(timezone.utc) + update_period
 
             # Update feed timestamps
-            db.update_feed_timestamps(feed_id, feed_last_updated, next_check_time)
+            db.update_feed_timestamps(feed_id, last_updated, next_check_time)
 
-            logger.debug(f"  Last updated: {feed_last_updated}")
+            logger.debug(f"  Last updated: {last_updated}")
             logger.debug(f"  Update period: {update_period}")
             logger.debug(f"  Next check: {next_check_time}")
 
