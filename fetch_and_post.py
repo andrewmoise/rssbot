@@ -1,17 +1,18 @@
 import argparse
 import feedparser
+import dateparser
 from datetime import datetime, timedelta, timezone
-from dateutil import parser
 import requests
 import logging
 import time
+from urllib.parse import urlparse
 
 from db import RSSFeedDB
 from lemmy import LemmyCommunicator
 
 ORIG_HEADERS = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
 #ORIG_HEADERS = {'User-Agent': 'Wget/1.20.3 (linux-gnu)'}
-MAX_DELAY = 90
+MAX_DELAY = 180
 
 def setup_logging():
     logger = logging.getLogger()
@@ -56,10 +57,15 @@ def get_feed_update_period(entries, current_time):
     return min(update_period, timedelta(minutes=MAX_DELAY))
 
 def parse_date_with_timezone(date_str):
-    parsed_date = parser.parse(date_str)
-    if parsed_date.tzinfo is None:
-        logger.warning(f"Date without timezone info: {date_str}. Assuming UTC.")
-        return parsed_date.replace(tzinfo=timezone.utc)
+    parsed_date = dateparser.parse(date_str, settings={
+        'TIMEZONE': 'UTC',  # Assume UTC if no timezone is specified
+        'RETURN_AS_TIMEZONE_AWARE': True,  # Always return timezone-aware datetime
+    })
+    
+    if parsed_date is None:
+        raise ValueError(f"Unable to parse date: {date_str}")
+    
+    # Convert to UTC
     return parsed_date.astimezone(timezone.utc)
 
 def set_backoff_next_check(db, feed):
@@ -92,10 +98,12 @@ def fetch_and_post(community_filter=None):
             next_check_time = min(next_check_times)
             delay = int(max(delay, (next_check_time - datetime.now(timezone.utc)).total_seconds()))
 
-        logger.info(f"Sleeping for {delay} seconds until next check time.")
+        logger.info(f"Sleeping for {delay} seconds")
         time.sleep(delay+1)
         delay = 60 # Next time through, sleep at least 1 minute
         
+        hit_servers = set()
+
         for feed in feeds:
             feed_id, feed_url, community_name, community_id, last_updated, next_check = feed
 
@@ -105,8 +113,17 @@ def fetch_and_post(community_filter=None):
 
             # Check if next_check is in the future
             if next_check and parse_date_with_timezone(next_check) > datetime.now(timezone.utc):
-                logger.debug(f"Skipping feed {feed_url} as next_check is in the future")
+                logger.debug(f"Skipping {feed_url} as next_check is in the future")
                 continue
+
+            # Skip feeds we've already hit the server for this time around
+            parsed_url = urlparse(feed_url)
+            host = parsed_url.netloc
+            if host in hit_servers:
+                logger.debug(f"Skipping {feed_url}; already hit this iteration")
+                continue
+            else:
+                hit_servers.add(host)
 
             # Prepare headers with If-Modified-Since
             request_headers = ORIG_HEADERS.copy()
@@ -132,13 +149,6 @@ def fetch_and_post(community_filter=None):
                 continue
             
             logger.debug('  Feed fetched successfully')
-
-            # Get feed update timestamp
-            feed_updated = rss.feed.get('updated_parsed') or rss.feed.get('published_parsed')
-            if feed_updated:
-                feed_last_updated = datetime(*feed_updated[:6])
-            else:
-                feed_last_updated = datetime.now(timezone.utc)
 
             # Calculate update period
             update_period = get_feed_update_period(rss.entries, datetime.now(timezone.utc))
@@ -177,7 +187,7 @@ def fetch_and_post(community_filter=None):
                     continue
 
                 logger.debug(f"  Posting: {headline}")
-                logger.debug("    to {community_name}")
+                logger.debug(f"    to {community_name}")
 
                 try:
                     post = lemmy_api.create_post(
