@@ -12,7 +12,9 @@ from lemmy import LemmyCommunicator
 
 ORIG_HEADERS = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
 #ORIG_HEADERS = {'User-Agent': 'Wget/1.20.3 (linux-gnu)'}
-MAX_DELAY = 180
+
+MAX_FETCH_DELAY = 180  # Max time between hits to a given RSS feed, in minutes
+POST_DELAY = 5         # Min time between posts from a single RSS feed, in minutes
 
 def setup_logging():
     logger = logging.getLogger()
@@ -43,18 +45,18 @@ logger = setup_logging()
 
 def get_feed_update_period(entries, current_time):
     if not entries:
-        return timedelta(minutes=MAX_DELAY)
+        return timedelta(minutes=MAX_FETCH_DELAY)
     
     dates = [parse_date_with_timezone(entry.get('published', entry.get('updated'))) for entry in entries if entry.get('published') or entry.get('updated')]
     
     if not dates:
-        return timedelta(minutes=MAX_DELAY)
+        return timedelta(minutes=MAX_FETCH_DELAY)
     
     latest = current_time
     earliest = min(dates)
     
     update_period = (latest - earliest) / len(dates)
-    return min(update_period, timedelta(minutes=MAX_DELAY))
+    return min(update_period, timedelta(minutes=MAX_FETCH_DELAY))
 
 def parse_date_with_timezone(date_str):
     parsed_date = dateparser.parse(date_str, settings={
@@ -75,10 +77,10 @@ def set_backoff_next_check(db, feed):
     if last_updated:
         last_updated_dt = parse_date_with_timezone(last_updated)
         #next_check_dt = parse_date_with_timezone(next_check)
-        update_period = min(datetime.now(timezone.utc) - last_updated_dt, timedelta(minutes=MAX_DELAY))
-        #update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_DELAY))
+        update_period = min(datetime.now(timezone.utc) - last_updated_dt, timedelta(minutes=MAX_FETCH_DELAY))
+        #update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_FETCH_DELAY))
     else:
-        update_period = timedelta(minutes=MAX_DELAY)
+        update_period = timedelta(minutes=MAX_FETCH_DELAY)
 
     next_check_time = datetime.now(timezone.utc) + update_period
     db.update_feed_timestamps(feed_id, last_updated, next_check_time)
@@ -162,6 +164,7 @@ def fetch_and_post(community_filter=None):
             logger.debug(f"  Next check: {next_check_time}")
 
             time_limit = datetime.now(timezone.utc) - timedelta(days=3)
+            hit_feed = False
 
             for entry in rss.entries:
                 if hasattr(entry, 'published'):
@@ -186,6 +189,14 @@ def fetch_and_post(community_filter=None):
                     logger.debug(f"Time exceeded: {published_date} > {time_limit}")
                     continue
 
+                if hit_feed:
+                    logger.debug("  Not posting -- multiple stories")
+                    # Don't post multiple stories from a single feed without a delay
+                    next_check = datetime.now(timezone.utc) + timedelta(minutes=POST_DELAY)
+                    logger.debug(f"  next_check reset to {next_check}")
+                    db.update_feed_timestamps(feed_id, None, next_check)
+                    break
+
                 logger.debug(f"  Posting: {headline}")
                 logger.debug(f"    to {community_name}")
 
@@ -205,6 +216,8 @@ def fetch_and_post(community_filter=None):
                     logger.debug(f"  Posted successfully! Lemmy post ID: {lemmy_post_id}")
                 else:
                     logger.warning("Could not post to Lemmy")
+
+                hit_feed = True
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch and post RSS feeds to Lemmy.')
