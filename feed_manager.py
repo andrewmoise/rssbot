@@ -1,8 +1,11 @@
 import argparse
 import feedparser
+import requests
+
 from db import RSSFeedDB
-from lemmy import LemmyCommunicator
+from fetch_and_post import USER_AGENT
 from fetch_icons import fetch_high_res_icons, find_best_icon
+from lemmy import LemmyCommunicator
 
 def list_feeds(db):
     feeds = db.list_feeds()
@@ -13,7 +16,11 @@ def list_feeds(db):
 
 def add_feed(db, feed_url, community_name, lemmy_api, appoint_mod=True, create_community=True, create_db_entry=True):
     # Fetch and parse the RSS feed
-    feed = feedparser.parse(feed_url)
+    request_headers = {'User-Agent': USER_AGENT}
+    response = requests.get(feed_url, headers=request_headers, timeout=30)
+    response.raise_for_status()
+    feed = feedparser.parse(response.content)
+    
     if not feed.entries:
         print(f"Error: {feed_url} does not appear to be a valid RSS feed.")
         return

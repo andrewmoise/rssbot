@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 from db import RSSFeedDB
 from lemmy import LemmyCommunicator
 
-ORIG_HEADERS = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
-#ORIG_HEADERS = {'User-Agent': 'Wget/1.20.3 (linux-gnu)'}
+USER_AGENT = 'Lemmy RSSBot'
+# USER_AGENT = 'Wget/1.20.3 (linux-gnu)'
 
 MAX_FETCH_DELAY = 5*60  # Max time between hits to each RSS feed, in minutes
 POST_DELAY = 5          # Min time between multiple posts from a single RSS feed, in minutes
@@ -143,7 +143,7 @@ def fetch_and_post(community_filter=None):
                 hit_servers.add(host)
 
             # Prepare headers with If-Modified-Since
-            request_headers = ORIG_HEADERS.copy()
+            request_headers = {'User-Agent': USER_AGENT}
             if last_updated is not None:
                 logger.debug(f"IMS header: {last_updated}")
                 request_headers['If-Modified-Since'] = last_updated
