@@ -1,9 +1,10 @@
 import argparse
-import feedparser
 import dateparser
 from datetime import datetime, timedelta, timezone
-import requests
+import feedparser
 import logging
+import requests
+from statistics import median
 import time
 from urllib.parse import urlparse
 
@@ -13,7 +14,7 @@ from lemmy import LemmyCommunicator
 ORIG_HEADERS = {'User-Agent': 'Pondercat RSSBot (https://rss.ponder.cat/post/1454)'}
 #ORIG_HEADERS = {'User-Agent': 'Wget/1.20.3 (linux-gnu)'}
 
-MAX_FETCH_DELAY = 2*60  # Max time between hits to each RSS feed, in minutes
+MAX_FETCH_DELAY = 5*60  # Max time between hits to each RSS feed, in minutes
 POST_DELAY = 5          # Min time between multiple posts from a single RSS feed, in minutes
 
 def setup_logging():
@@ -44,34 +45,31 @@ def setup_logging():
 logger = setup_logging()
 
 def get_feed_update_period(entries):
+    # Convert entries to timestamps and filter out None values
+    timestamps = sorted([
+        parse_date_with_timezone(entry.get('published') or entry.get('updated'))
+        for entry in entries
+        if entry.get('published') or entry.get('updated')
+    ])
+
+    burst_times = []
     burst_begin = None
-    burst_total = timedelta()
-    burst_count = 0
 
-    for entry in entries:
-        timestamp = entry.get('published', entry.get('updated'))
-        if timestamp is None:
-            continue
-        timestamp = parse_date_with_timezone(timestamp)
-
+    for timestamp in timestamps:
         if burst_begin is None:
             burst_begin = timestamp
             continue
 
-        time_diff = abs(timestamp - burst_begin)
-        if time_diff < timedelta(minutes=POST_DELAY):
-            continue
+        time_diff = timestamp - burst_begin
+        if time_diff >= timedelta(minutes=POST_DELAY):
+            logger.debug(f"  Adding {time_diff} to burst times")
+            burst_times.append(time_diff)
+            burst_begin = timestamp
 
-        logger.debug(f"  Adding {time_diff} to total")
+    logger.debug(f"  Total of {len(burst_times)} burst times recorded")
 
-        burst_total += time_diff
-        burst_count += 1
-        burst_begin = timestamp
-
-    logger.debug(f"  Total time {burst_total} over {burst_count} bursts")
-
-    if burst_count >= 1:
-        return burst_total / burst_count
+    if burst_times:
+        return median(burst_times)
     else:
         return timedelta(minutes=MAX_FETCH_DELAY)
 
@@ -203,7 +201,7 @@ def fetch_and_post(community_filter=None):
                     continue
 
                 if published_date < time_limit:
-                    logger.debug(f"Time exceeded: {published_date} > {time_limit}")
+                    #logger.debug(f"Time exceeded: {published_date} > {time_limit}")
                     continue
 
                 if hit_feed:
@@ -214,7 +212,7 @@ def fetch_and_post(community_filter=None):
                     db.update_feed_timestamps(feed_id, None, next_check)
                     break
 
-                logger.debug(f"  Posting: {headline}")
+                logger.info(f"  Posting: {headline}")
                 logger.debug(f"    to {community_name}")
 
                 try:
