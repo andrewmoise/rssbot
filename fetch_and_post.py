@@ -108,7 +108,7 @@ def parse_date_with_timezone(date_str):
     return parsed_date.astimezone(timezone.utc)
 
 def set_backoff_next_check(db, feed):
-    feed_id, feed_url, community_name, community_id, last_updated, next_check = feed
+    feed_id, feed_url, community_name, community_id, last_updated, next_check, etag = feed
 
     # Update next_check time
     if last_updated:
@@ -120,7 +120,7 @@ def set_backoff_next_check(db, feed):
         update_period = SHORT_FETCH_DELAY
 
     next_check_time = datetime.now(timezone.utc) + update_period
-    db.update_feed_timestamps(feed_id, last_updated, next_check_time)
+    db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
     
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
@@ -144,7 +144,7 @@ def fetch_and_post(community_filter=None):
         hit_servers = set()
 
         for feed in feeds:
-            feed_id, feed_url, community_name, community_id, last_updated, next_check = feed
+            feed_id, feed_url, community_name, community_id, last_updated, next_check, etag = feed
 
             # Skip feeds not in the community filter
             if community_filter and community_name not in community_filter:
@@ -164,13 +164,17 @@ def fetch_and_post(community_filter=None):
             else:
                 hit_servers.add(host)
 
+            logger.info(f"Processing feed: {feed_url}")
+
             # Prepare headers with If-Modified-Since
             request_headers = {'User-Agent': USER_AGENT}
             if last_updated is not None:
-                logger.debug(f"IMS header: {last_updated}")
+                logger.debug(f"  IMS header: {last_updated}")
                 request_headers['If-Modified-Since'] = last_updated
+            if etag is not None:
+                logger.debug(f"  ETag header: {etag}")
+                request_headers['If-None-Match'] = etag
 
-            logger.info(f"Processing feed: {feed_url}")
             try:
                 response = requests.get(feed_url, headers=request_headers, timeout=30)
 
@@ -180,6 +184,15 @@ def fetch_and_post(community_filter=None):
                     continue
 
                 response.raise_for_status()
+
+                # Retrieve the last-modified and ETag headers
+                last_updated = response.headers.get('Last-Modified')
+                if last_updated:
+                    logger.debug(f"  Last-Modified: {last_updated}")
+
+                etag = response.headers.get('ETag')
+                if etag:
+                    logger.debug(f"  ETag: {etag}")
 
                 rss = feedparser.parse(response.content)
             except Exception as e:
@@ -194,7 +207,7 @@ def fetch_and_post(community_filter=None):
             next_check_time = datetime.now(timezone.utc) + update_period
 
             # Update feed timestamps
-            db.update_feed_timestamps(feed_id, last_updated, next_check_time)
+            db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
 
             logger.debug(f"  Last updated: {last_updated}")
             logger.debug(f"  Update period: {update_period}")
@@ -235,7 +248,7 @@ def fetch_and_post(community_filter=None):
                     # Don't post multiple stories from a single feed without a delay
                     next_check = datetime.now(timezone.utc) + POST_DELAY
                     logger.debug(f"    next_check reset to {next_check}")
-                    db.update_feed_timestamps(feed_id, None, next_check)
+                    db.update_feed_timestamps(feed_id, None, None, next_check)
                     break
 
                 logger.info(f"  Posting: {headline}")
