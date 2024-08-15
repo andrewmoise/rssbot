@@ -3,6 +3,7 @@ import dateparser
 from datetime import datetime, timedelta, timezone
 import feedparser
 import logging
+import re
 import requests
 from statistics import median
 import time
@@ -14,8 +15,11 @@ from lemmy import LemmyCommunicator
 USER_AGENT = 'Lemmy RSSBot'
 # USER_AGENT = 'Wget/1.20.3 (linux-gnu)'
 
-MAX_FETCH_DELAY = 5*60  # Max time between hits to each RSS feed, in minutes
+SHORT_FETCH_DELAY = timedelta(minutes=60)
+LONG_FETCH_DELAY = timedelta(minutes=5*60)
 POST_DELAY = 5          # Min time between multiple posts from a single RSS feed, in minutes
+
+BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*'
 
 def setup_logging():
     logger = logging.getLogger()
@@ -68,10 +72,26 @@ def get_feed_update_period(entries):
 
     logger.debug(f"  Total of {len(burst_times)} burst times recorded")
 
-    if burst_times:
-        return median(burst_times)
-    else:
-        return timedelta(minutes=MAX_FETCH_DELAY)
+    if not burst_times:
+        return SHORT_FETCH_DELAY
+
+    time_since_last = datetime.now(timezone.utc) - timestamps[-1]
+    logger.debug(f"  Time since last: {time_since_last}")
+
+    median_time = median(burst_times)
+    logger.debug(f"  Median: {median_time}")
+
+    # Don't ever check slower than LONG_FETCH_DELAY
+    if median_time > LONG_FETCH_DELAY:
+        return LONG_FETCH_DELAY
+
+    # If it's been longer than normal, do an exponential backoff, but only go
+    # slower than SHORT_FETCH_DELAY if the median is also slower than that
+    if time_since_last > median_time:
+        return min(time_since_last, max(median_time, SHORT_FETCH_DELAY))
+
+    # Normal case, just do median time, nothing special
+    return median_time
 
 def parse_date_with_timezone(date_str):
     parsed_date = dateparser.parse(date_str, settings={
@@ -92,10 +112,10 @@ def set_backoff_next_check(db, feed):
     if last_updated:
         last_updated_dt = parse_date_with_timezone(last_updated)
         #next_check_dt = parse_date_with_timezone(next_check)
-        update_period = min(datetime.now(timezone.utc) - last_updated_dt, timedelta(minutes=MAX_FETCH_DELAY))
+        update_period = min(datetime.now(timezone.utc) - last_updated_dt, LONG_FETCH_DELAY)
         #update_period = min(next_check_dt - last_updated_dt, timedelta(minutes=MAX_FETCH_DELAY))
     else:
-        update_period = timedelta(minutes=MAX_FETCH_DELAY)
+        update_period = SHORT_FETCH_DELAY
 
     next_check_time = datetime.now(timezone.utc) + update_period
     db.update_feed_timestamps(feed_id, last_updated, next_check_time)
@@ -169,7 +189,7 @@ def fetch_and_post(community_filter=None):
 
             # Calculate update period
             update_period = get_feed_update_period(rss.entries)
-            next_check_time = datetime.now(timezone.utc) + min(update_period, timedelta(minutes=MAX_FETCH_DELAY))
+            next_check_time = datetime.now(timezone.utc) + update_period
 
             # Update feed timestamps
             db.update_feed_timestamps(feed_id, last_updated, next_check_time)
@@ -197,18 +217,21 @@ def fetch_and_post(community_filter=None):
                 headline = entry.title
 
                 if db.get_article_by_url(article_url):
-                    #logger.debug(f"Article already exists: {article_url}")
+                    #logger.debug(f"  Article already exists: {article_url}")
                     continue
 
                 if published_date < time_limit:
-                    #logger.debug(f"Time exceeded: {published_date} > {time_limit}")
+                    #logger.debug(f"  Time exceeded: {published_date} > {time_limit}")
                     continue
+
+                if re.match(BLACKLIST_RE, headline):
+                    logger.debug(f"  Not posting {headline}, blacklisted")
 
                 if hit_feed:
                     logger.debug("  Not posting -- multiple stories")
                     # Don't post multiple stories from a single feed without a delay
                     next_check = datetime.now(timezone.utc) + timedelta(minutes=POST_DELAY)
-                    logger.debug(f"  next_check reset to {next_check}")
+                    logger.debug(f"    next_check reset to {next_check}")
                     db.update_feed_timestamps(feed_id, None, next_check)
                     break
 
@@ -223,14 +246,14 @@ def fetch_and_post(community_filter=None):
                     )
                     lemmy_post_id = post['id'] if post else None
                 except Exception as e:
-                    logger.error(f"Exception while posting to Lemmy: {str(e)}")
+                    logger.error(f"    Exception while posting to Lemmy: {str(e)}")
                     continue
                     
                 if lemmy_post_id:
                     db.add_article(feed_id, article_url, headline, datetime.now(timezone.utc), lemmy_post_id)
-                    logger.debug(f"  Posted successfully! Lemmy post ID: {lemmy_post_id}")
+                    logger.debug(f"    Posted successfully! Lemmy post ID: {lemmy_post_id}")
                 else:
-                    logger.warning("Could not post to Lemmy")
+                    logger.warning("    Could not post to Lemmy")
 
                 hit_feed = True
 
