@@ -15,11 +15,13 @@ from lemmy import LemmyCommunicator
 USER_AGENT = 'Lemmy RSSBot'
 # USER_AGENT = 'Wget/1.20.3 (linux-gnu)'
 
-SHORT_FETCH_DELAY = timedelta(minutes=60)
-LONG_FETCH_DELAY = timedelta(minutes=5*60)
-POST_DELAY = 5          # Min time between multiple posts from a single RSS feed, in minutes
+SHORT_FETCH_DELAY = timedelta(minutes=60)   # Max delay from exponential backoff
+LONG_FETCH_DELAY = timedelta(minutes=5*60)  # Max delay from feed estimated pace
+POST_DELAY = timedelta(minutes=5)           # Delay introduced between multiple posts from a single RSS feed
 
 BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*'
+
+POST_WINDOW = timedelta(days=3) # Max age of articles to post
 
 def setup_logging():
     logger = logging.getLogger()
@@ -65,7 +67,7 @@ def get_feed_update_period(entries):
             continue
 
         time_diff = timestamp - burst_begin
-        if time_diff >= timedelta(minutes=POST_DELAY):
+        if time_diff >= POST_DELAY:
             logger.debug(f"  Adding {time_diff} to burst times")
             burst_times.append(time_diff)
             burst_begin = timestamp
@@ -135,7 +137,7 @@ def fetch_and_post(community_filter=None):
             next_check_time = min(next_check_times)
             delay = int(max(delay, (next_check_time - datetime.now(timezone.utc)).total_seconds()))
 
-        logger.info(f"Sleeping for {delay} seconds")
+        logger.info(f"  Sleeping for {delay} seconds")
         time.sleep(delay+1)
         delay = 60 # Next time through, sleep at least 1 minute
         
@@ -198,7 +200,7 @@ def fetch_and_post(community_filter=None):
             logger.debug(f"  Update period: {update_period}")
             logger.debug(f"  Next check: {next_check_time}")
 
-            time_limit = datetime.now(timezone.utc) - timedelta(days=3)
+            time_limit = datetime.now(timezone.utc) - POST_WINDOW
             hit_feed = False
 
             for entry in reversed(rss.entries):
@@ -226,11 +228,12 @@ def fetch_and_post(community_filter=None):
 
                 if re.match(BLACKLIST_RE, headline):
                     logger.debug(f"  Not posting {headline}, blacklisted")
+                    continue
 
                 if hit_feed:
-                    logger.debug("  Not posting -- multiple stories")
+                    logger.info("  More articles in feed, requeueing with delay")
                     # Don't post multiple stories from a single feed without a delay
-                    next_check = datetime.now(timezone.utc) + timedelta(minutes=POST_DELAY)
+                    next_check = datetime.now(timezone.utc) + POST_DELAY
                     logger.debug(f"    next_check reset to {next_check}")
                     db.update_feed_timestamps(feed_id, None, next_check)
                     break
