@@ -86,7 +86,6 @@ def get_feed_update_period(feed_id, entries):
 
         time_diff = timestamp - burst_begin
         if time_diff >= POST_DELAY:
-            logger.debug(f"  Adding {time_diff} to burst times")
             burst_times.append(time_diff)
             burst_begin = timestamp
 
@@ -120,6 +119,8 @@ def parse_date_with_timezone(date_str):
     return parsed_date.astimezone(timezone.utc)
 
 def set_backoff_next_check(db, feed):
+    global median_times, last_article_times
+
     feed_id, feed_url, community_name, community_id, last_updated, next_check, etag = feed
 
     median_time = median_times.get(feed_id)
@@ -129,7 +130,7 @@ def set_backoff_next_check(db, feed):
         update_period = determine_next_check_time(median_time, datetime.now(timezone.utc) - last_article_time)
         logger.debug(f"  Normal backoff {update_period}")
     elif last_article_time:
-        update_period = max(datetime.now(timezone.utc) - last_article_time, LONG_FETCH_DELAY)
+        update_period = min(datetime.now(timezone.utc) - last_article_time, LONG_FETCH_DELAY)
         logger.debug(f"  No-median backoff {update_period}")
     else:
         last_article_times[feed_id] = datetime.now(timezone.utc)
@@ -237,8 +238,6 @@ def fetch_and_post(community_filter=None):
                 if hasattr(entry, 'published'):
                     try:
                         published_date = parse_date_with_timezone(entry.published)
-                        #if published_date.tzinfo is None or published_date.tzinfo.utcoffset(published_date) is None:
-                        #    published_date = published_date.replace(tzinfo=timezone.utc)
                     except ValueError as e:
                         logger.error(f"Date parsing error: {e} for date string: {entry.published}")
                         continue
@@ -249,11 +248,9 @@ def fetch_and_post(community_filter=None):
                 headline = entry.title
 
                 if db.get_article_by_url(article_url):
-                    #logger.debug(f"  Article already exists: {article_url}")
                     continue
 
                 if published_date < time_limit:
-                    #logger.debug(f"  Time exceeded: {published_date} > {time_limit}")
                     continue
 
                 if re.match(BLACKLIST_RE, headline):
