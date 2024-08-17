@@ -19,7 +19,7 @@ SHORT_FETCH_DELAY = timedelta(minutes=60)   # Max delay from exponential backoff
 LONG_FETCH_DELAY = timedelta(minutes=5*60)  # Max delay from feed estimated pace
 POST_DELAY = timedelta(minutes=5)           # Delay introduced between multiple posts from a single RSS feed
 
-BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*'
+BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*|Today.s Wordle.*'
 
 POST_WINDOW = timedelta(days=3) # Max age of articles to post
 
