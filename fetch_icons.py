@@ -1,12 +1,21 @@
 import argparse
-import requests
 from bs4 import BeautifulSoup
-from PIL import Image
 from io import BytesIO
+from PIL import Image
+import requests
 from urllib.parse import urljoin
 
+from fetch_and_post import USER_AGENT
+
+REQUEST_HEADERS = {'User-Agent': USER_AGENT}
+
 def fetch_high_res_icons(url):
-    response = requests.get(url)
+    try:
+        response = requests.get(url, headers=REQUEST_HEADERS, timeout=30)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+        return []
+    
     soup = BeautifulSoup(response.content, 'html.parser')
     icons = []
     for link in soup.find_all('link', rel=lambda value: value and 'icon' in value.lower()):
@@ -18,7 +27,7 @@ def fetch_high_res_icons(url):
     return icons
 
 def download_image(image_url):
-    response = requests.get(image_url)
+    response = requests.get(image_url, headers=REQUEST_HEADERS, timeout=30)
     image = Image.open(BytesIO(response.content))
     return image
 
