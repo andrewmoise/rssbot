@@ -9,6 +9,7 @@ from statistics import median
 import time
 from urllib.parse import urlparse
 
+from config import Config
 from db import RSSFeedDB
 from lemmy import LemmyCommunicator
 
@@ -121,7 +122,7 @@ def parse_date_with_timezone(date_str):
 def set_backoff_next_check(db, feed):
     global median_times, last_article_times
 
-    feed_id, feed_url, community_name, community_id, last_updated, next_check, etag = feed
+    feed_id, feed_url, community_name, community_id, last_updated, next_check, etag, is_paywall = feed
 
     median_time = median_times.get(feed_id)
     last_article_time = last_article_times.get(feed_id)
@@ -142,7 +143,10 @@ def set_backoff_next_check(db, feed):
 
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
-    lemmy_api = LemmyCommunicator()
+
+    #lemmy_api = LemmyCommunicator()
+    lemmy_api_free = LemmyCommunicator(username=Config.LEMMY_FREE_USERNAME)
+    lemmy_api_paywall = LemmyCommunicator(username=Config.LEMMY_PAYWALL_USERNAME)
 
     delay = 0 # First time through, no delay
     
@@ -162,7 +166,12 @@ def fetch_and_post(community_filter=None):
         hit_servers = set()
 
         for feed in feeds:
-            feed_id, feed_url, community_name, community_id, last_updated, next_check, etag = feed
+            feed_id, feed_url, community_name, community_id, last_updated, next_check, etag, is_paywall = feed
+
+            if is_paywall:
+                lemmy_api = lemmy_api_paywall
+            else:
+                lemmy_api = lemmy_api_free
 
             # Skip feeds not in the community filter
             if community_filter and community_name not in community_filter:

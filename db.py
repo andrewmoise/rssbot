@@ -19,7 +19,8 @@ class RSSFeedDB:
                     community_id INTEGER,
                     last_updated_header TEXT,
                     next_check TIMESTAMP,
-                    etag TEXT
+                    etag TEXT,
+                    is_paywall BOOLEAN
                 )
             ''')
             cursor.execute('''
@@ -35,14 +36,14 @@ class RSSFeedDB:
             ''')
             conn.commit()
 
-    def add_feed(self, feed_url, community_name, community_id, last_updated_header=None, etag=None, next_check=None):
+    def add_feed(self, feed_url, community_name, community_id, last_updated_header=None, etag=None, next_check=None, is_paywall=False):
         """Add a new RSS feed to the database."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id, last_updated_header, etag, next_check)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (feed_url, community_name, community_id, last_updated_header, etag, next_check))
+                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id, last_updated_header, etag, next_check, is_paywall)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (feed_url, community_name, community_id, last_updated_header, etag, next_check, is_paywall))
             conn.commit()
 
     def update_feed_timestamps(self, feed_id, last_updated_header, etag, next_check):
@@ -56,8 +57,8 @@ class RSSFeedDB:
             ''', (last_updated_header, etag, next_check, feed_id))
             conn.commit()
 
-    def update_feed_url(self, community_name, new_feed_url):
-        """Update the feed URL for a given community name."""
+    def update_feed_url(self, community_name, new_feed_url, is_paywall=None):
+        """Update the feed URL and optionally the is_paywall status for a given community name."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -65,11 +66,18 @@ class RSSFeedDB:
             ''', (community_name,))
             count = cursor.fetchone()[0]
             if count == 1:
-                cursor.execute('''
-                    UPDATE rss_feeds
-                    SET feed_url = ?
-                    WHERE community_name = ?
-                ''', (new_feed_url, community_name))
+                if is_paywall is not None:
+                    cursor.execute('''
+                        UPDATE rss_feeds
+                        SET feed_url = ?, is_paywall = ?
+                        WHERE community_name = ?
+                    ''', (new_feed_url, is_paywall, community_name))
+                else:
+                    cursor.execute('''
+                        UPDATE rss_feeds
+                        SET feed_url = ?
+                        WHERE community_name = ?
+                    ''', (new_feed_url, community_name))
                 conn.commit()
             elif count > 1:
                 raise ValueError(f"Multiple entries found for community name '{community_name}'. Update operation aborted.")
@@ -129,21 +137,27 @@ class RSSFeedDB:
         return changes  # Returns the number of rows deleted
 
 def migrate_database():
-    """Migrate the database to add the etag column."""
+    """Migrate the database to add the etag and is_paywall columns."""
     db_path = 'rss_feeds.db'
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         
-        # Check if the etag column exists
+        # Check if the etag and is_paywall columns exist
         cursor.execute("PRAGMA table_info(rss_feeds)")
         columns = [column[1] for column in cursor.fetchall()]
         
         if 'etag' not in columns:
-            # Add the etag column
             cursor.execute('ALTER TABLE rss_feeds ADD COLUMN etag TEXT')
-            print("Database migration completed successfully. Added 'etag' column.")
+            print("Added 'etag' column.")
+        
+        if 'is_paywall' not in columns:
+            cursor.execute('ALTER TABLE rss_feeds ADD COLUMN is_paywall BOOLEAN DEFAULT FALSE')
+            print("Added 'is_paywall' column with default value FALSE.")
+        
+        if 'etag' in columns and 'is_paywall' in columns:
+            print("Database is up to date. No migration needed.")
         else:
-            print("Database already has the 'etag' column. No migration needed.")
+            print("Database migration completed successfully.")
         
         conn.commit()
 

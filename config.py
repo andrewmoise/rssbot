@@ -9,9 +9,8 @@ load_dotenv(find_dotenv('.env'), override=True)
 class Config:
     LEMMY_SERVER = os.getenv('LEMMY_SERVER')
     LEMMY_USERNAME = os.getenv('LEMMY_USERNAME')
+    LEMMY_FREE_USERNAME = os.getenv('LEMMY_FREE_USERNAME')
+    LEMMY_PAYWALL_USERNAME = os.getenv('LEMMY_PAYWALL_USERNAME')
     LEMMY_PASSWORD = os.getenv('LEMMY_PASSWORD')
     LEMMY_COMMUNITY = os.getenv('LEMMY_COMMUNITY')
     REQUEST_DELAY = int(os.getenv('REQUEST_DELAY'))
-
-def banlist_name():
-    return f"banlist_{Config.LEMMY_SERVER}_{Config.LEMMY_COMMUNITY}.pkl"
