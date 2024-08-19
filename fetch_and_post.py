@@ -55,6 +55,29 @@ def setup_logging():
 
 logger = setup_logging()
 
+def trim_headline(headline, max_bytes = 200):
+    if len(headline.encode('utf-8')) <= max_bytes:
+        return headline
+
+    trimmed = ''
+    byte_count = 0
+    for char in headline:
+        char_bytes = len(char.encode('utf-8'))
+        if byte_count + char_bytes > max_bytes - 3:  # -3 for "..."
+            break
+        trimmed += char
+        byte_count += char_bytes
+
+    # Trim to last whitespace
+    trimmed = trimmed.rsplit(None, 1)[0] + "..."
+     
+    logger.debug(f"  Trimmed headline:")
+    logger.debug(f"    {headline}")
+    logger.debug(f"  To:")
+    logger.debug(f"    {trimmed}")
+
+    return trimmed
+
 def determine_next_check_time(median_time, time_since_last):
     # Don't ever check slower than LONG_FETCH_DELAY
     if median_time > LONG_FETCH_DELAY:
@@ -265,6 +288,8 @@ def fetch_and_post(community_filter=None):
                 if re.match(BLACKLIST_RE, headline):
                     logger.debug(f"  Not posting {headline}, blacklisted")
                     continue
+
+                headline = trim_headline(headline)
 
                 if hit_feed:
                     logger.info("  More articles in feed, requeueing with delay")
