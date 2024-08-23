@@ -7,6 +7,9 @@ from fetch_and_post import USER_AGENT
 from fetch_icons import fetch_high_res_icons, find_best_icon
 from lemmy import LemmyCommunicator
 
+FREE_MOD_USER=10862
+PAYWALL_MOD_USER=10863
+
 def list_feeds(db):
     feeds = db.list_feeds()
     for feed in feeds:
@@ -60,7 +63,10 @@ def add_feed(db, feed_url, community_name, lemmy_api, is_paywall=False, appoint_
 
     if community_id:
         if appoint_mod:
-            lemmy_api.appoint_mod(community_id, 2)
+            if is_paywall:
+                lemmy_api.appoint_mod(community_id, PAYWALL_MOD_USER)
+            else:
+                lemmy_api.appoint_mod(community_id, FREE_MOD_USER)
 
         if create_db_entry:
             db.add_feed(feed_url, community_name, community_id, is_paywall=is_paywall)
@@ -99,10 +105,10 @@ def update_mods(db, lemmy_api):
 
         if community_id not in processed_communities:
             if is_paywall:
-                #lemmy_api.appoint_mod(community_id, 10863)  # Appoint paywall mod
+                lemmy_api.appoint_mod(community_id, PAYWALL_MOD_USER)  # Appoint paywall mod
                 print(f"  Appointed paywall mod for community ID {community_id}")
             else:
-                #lemmy_api.appoint_mod(community_id, 10862)  # Appoint free mod
+                lemmy_api.appoint_mod(community_id, FREE_MOD_USER)  # Appoint free mod
                 print(f"  Appointed free mod for community ID {community_id}")
             
             processed_communities.add(community_id)
