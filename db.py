@@ -103,13 +103,26 @@ class RSSFeedDB:
             ''', (feed_id, article_url, headline, fetched_timestamp, lemmy_post_id))
             conn.commit()
 
-    def get_articles_by_feed(self, feed_id):
-        """Retrieve all articles for a specific feed."""
+    def get_articles_by_feed(self, feed_id, limit=None):
+        """
+        Retrieve articles for a specific feed, sorted by id in descending order.
+        
+        :param feed_id: The ID of the feed to retrieve articles for.
+        :param limit: Optional. The maximum number of articles to return.
+        :return: A list of articles.
+        """
         with closing(sqlite3.connect(self.db_path)) as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM rss_articles WHERE feed_id = ?
-            ''', (feed_id,))
+            query = '''
+                SELECT * FROM rss_articles 
+                WHERE feed_id = ? 
+                ORDER BY id DESC
+            '''
+            if limit is not None:
+                query += ' LIMIT ?'
+                cursor.execute(query, (feed_id, limit))
+            else:
+                cursor.execute(query, (feed_id,))
             return cursor.fetchall()
 
     def list_feeds(self):

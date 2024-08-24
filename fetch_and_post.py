@@ -16,17 +16,15 @@ from lemmy import LemmyCommunicator
 USER_AGENT = 'Lemmy RSSBot'
 # USER_AGENT = 'Wget/1.20.3 (linux-gnu)'
 
-SHORT_FETCH_DELAY = timedelta(minutes=60)   # Max delay from exponential backoff
-LONG_FETCH_DELAY = timedelta(minutes=5*60)  # Max delay from feed estimated pace
-POST_DELAY = timedelta(minutes=5)           # Delay introduced between multiple posts from a single RSS feed
+POST_DELAY = timedelta(minutes=5)
+
+FETCH_DELAYS = tuple(timedelta(minutes=delay) for delay in (5, 10, 20, 40, 60, 60*2, 60*4, 60*6, 60*8, 60*10, 60*12, 60*14, 60*16, 60*18, 60*20, 60*22, 60*24, 60*26))
+MAX_DELAY = timedelta(days=1)
+DEFAULT_DELAY = timedelta(minutes=60)
 
 BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*|Today.s Wordle.*|.*NYT Connections.*'
 
 POST_WINDOW = timedelta(days=3) # Max age of articles to post
-
-# New global variables to keep track of median times and last fetch times
-median_times = {}
-last_article_times = {}
 
 def setup_logging():
     logger = logging.getLogger()
@@ -78,32 +76,40 @@ def trim_headline(headline, max_bytes = 200):
 
     return trimmed
 
-def determine_next_check_time(median_time, time_since_last):
-    # Don't ever check slower than LONG_FETCH_DELAY
-    if median_time > LONG_FETCH_DELAY:
-        return LONG_FETCH_DELAY
+def parse_date_with_timezone(date_str):
+    parsed_date = dateparser.parse(date_str, settings={
+        'TIMEZONE': 'UTC',
+        'RETURN_AS_TIMEZONE_AWARE': True,
+    })
+    
+    if parsed_date is None:
+        raise ValueError(f"Unable to parse date: {date_str}")
+    
+    return parsed_date.astimezone(timezone.utc)
 
-    # If it's been longer than normal, do an exponential backoff, but only go
-    # slower than SHORT_FETCH_DELAY if the median is also slower than that
-    if time_since_last > median_time:
-        return min(time_since_last, max(median_time, SHORT_FETCH_DELAY))
+def get_article_timestamps(db, feed_id, entries=None):
+    if entries is not None:
+        return [
+            parse_date_with_timezone(entry.get('published') or entry.get('updated'))
+            for entry in entries
+            if entry.get('published') or entry.get('updated')
+        ]
+    else:
+        articles = db.get_articles_by_feed(feed_id, limit=20)
+        return [
+            parse_date_with_timezone(article[4])  # Assuming fetched_timestamp is at index 4
+            for article in articles
+        ]
 
-    # Or, if everything's normal, just do median time
-    return median_time
+def get_median_update_period(timestamps):
+    if not timestamps:
+        return DEFAULT_DELAY
 
-def get_feed_update_period(feed_id, entries):
-    global median_times, last_article_times
-
-    timestamps = sorted([
-        parse_date_with_timezone(entry.get('published') or entry.get('updated'))
-        for entry in entries
-        if entry.get('published') or entry.get('updated')
-    ])
-
+    sorted_timestamps = sorted(timestamps)
     burst_times = []
     burst_begin = None
 
-    for timestamp in timestamps:
+    for timestamp in sorted_timestamps:
         if burst_begin is None:
             burst_begin = timestamp
             continue
@@ -116,53 +122,49 @@ def get_feed_update_period(feed_id, entries):
     logger.debug(f"  Total of {len(burst_times)} burst times recorded")
 
     if not burst_times:
-        return SHORT_FETCH_DELAY
+        return DEFAULT_DELAY
 
     median_time = median(burst_times)
     logger.debug(f"  Median: {median_time}")
 
-    # Update the median time for this feed
-    median_times[feed_id] = median_time
-    last_article_times[feed_id] = timestamps[-1]
+    return median_time
 
-    time_since_last = datetime.now(timezone.utc) - timestamps[-1]
-    logger.debug(f"  Time since last: {time_since_last}")
+def set_backoff_next_check(db, feed, entries=None):
+    feed_id = feed[0]
 
-    return determine_next_check_time(median_time, time_since_last)
+    timestamps = get_article_timestamps(db, feed_id, entries)
+    update_period = get_median_update_period(timestamps)
+    logger.debug(f"  Median update period: {update_period}")
 
-def parse_date_with_timezone(date_str):
-    parsed_date = dateparser.parse(date_str, settings={
-        'TIMEZONE': 'UTC',  # Assume UTC if no timezone is specified
-        'RETURN_AS_TIMEZONE_AWARE': True,  # Always return timezone-aware datetime
-    })
-    
-    if parsed_date is None:
-        raise ValueError(f"Unable to parse date: {date_str}")
-    
-    # Convert to UTC
-    return parsed_date.astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    logger.debug(f"  Now: {now}")
 
-def set_backoff_next_check(db, feed):
-    global median_times, last_article_times
-
-    feed_id, feed_url, community_name, community_id, last_updated, next_check, etag, is_paywall = feed
-
-    median_time = median_times.get(feed_id)
-    last_article_time = last_article_times.get(feed_id)
-
-    if median_time and last_article_time:
-        update_period = determine_next_check_time(median_time, datetime.now(timezone.utc) - last_article_time)
-        logger.debug(f"  Normal backoff {update_period}")
-    elif last_article_time:
-        update_period = min(datetime.now(timezone.utc) - last_article_time, LONG_FETCH_DELAY)
-        logger.debug(f"  No-median backoff {update_period}")
+    if not timestamps:
+        next_check_time = now + DEFAULT_DELAY
     else:
-        last_article_times[feed_id] = datetime.now(timezone.utc)
-        update_period = SHORT_FETCH_DELAY
-        logger.debug(f"  Init backoff {update_period}")
+        most_recent_article = max(timestamps)
+        time_since_last_article = now - most_recent_article
 
-    next_check_time = datetime.now(timezone.utc) + update_period
-    db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
+        try:
+            suitable_delay = next(
+                (delay for delay in FETCH_DELAYS if delay > time_since_last_article),
+            )
+            logger.debug(f"  Suitable delay: {suitable_delay}")
+
+            next_check_time = max(most_recent_article + suitable_delay, now + update_period)
+            next_check_time = min(next_check_time, now + MAX_DELAY)
+
+        except StopIteration:
+            next_check_time = most_recent_article + FETCH_DELAYS[-1]
+            next_check_time = next_check_time.replace(year=now.year, month=now.month, day=now.day)
+
+            # If it's in the past, add 1 day
+            if next_check_time <= now + DEFAULT_DELAY:
+                next_check_time += timedelta(days=1)
+
+    logger.debug(f"  Next check time: {next_check_time}")
+
+    return next_check_time
 
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
@@ -229,7 +231,10 @@ def fetch_and_post(community_filter=None):
 
                 if response.status_code == 304:
                     logger.info(f"  Not modified since last check")
-                    set_backoff_next_check(db, feed)
+
+                    next_check_time = set_backoff_next_check(db, feed)
+                    db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
+                    
                     continue
 
                 response.raise_for_status()
@@ -247,20 +252,19 @@ def fetch_and_post(community_filter=None):
 
             except Exception as e:
                 logger.error(f"Exception while fetching feed {feed_url}: {str(e)}")
-                set_backoff_next_check(db, feed)
+                
+                next_check_time = set_backoff_next_check(db, feed)
+                db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
+
                 continue
             
             logger.debug('  Feed fetched successfully')
 
             # Calculate update period
-            update_period = get_feed_update_period(feed_id, rss.entries)
-            next_check_time = datetime.now(timezone.utc) + update_period
-
-            # Update feed timestamps
+            next_check_time = set_backoff_next_check(db, feed, rss.entries)
             db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
 
             logger.debug(f"  Last updated: {last_updated}")
-            logger.debug(f"  Update period: {update_period}")
             logger.debug(f"  Next check: {next_check_time}")
 
             time_limit = datetime.now(timezone.utc) - POST_WINDOW
