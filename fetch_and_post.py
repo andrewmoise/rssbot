@@ -16,11 +16,10 @@ from lemmy import LemmyCommunicator
 USER_AGENT = 'Lemmy RSSBot'
 # USER_AGENT = 'Wget/1.20.3 (linux-gnu)'
 
-POST_DELAY = timedelta(minutes=5)
-
-FETCH_DELAYS = tuple(timedelta(minutes=delay) for delay in (5, 10, 20, 40, 60, 60*2, 60*4, 60*6, 60*8, 60*10, 60*12, 60*14, 60*16, 60*18, 60*20, 60*22, 60*24, 60*26))
-MAX_DELAY = timedelta(days=1)
-DEFAULT_DELAY = timedelta(minutes=60)
+MIN_BACKOFF = timedelta(minutes=5)
+SHORT_BACKOFF = timedelta(hours=2)
+LONG_BACKOFF = timedelta(hours=24)
+MAX_BACKOFF = timedelta(days=4)
 
 BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*|Today.s Wordle.*|.*NYT Connections.*'
 
@@ -103,7 +102,7 @@ def get_article_timestamps(db, feed_id, entries=None):
 
 def get_median_update_period(timestamps):
     if not timestamps:
-        return DEFAULT_DELAY
+        return SHORT_BACKOFF
 
     sorted_timestamps = sorted(timestamps)
     burst_times = []
@@ -115,52 +114,63 @@ def get_median_update_period(timestamps):
             continue
 
         time_diff = timestamp - burst_begin
-        if time_diff >= POST_DELAY:
+        if time_diff >= MIN_BACKOFF:
             burst_times.append(time_diff)
             burst_begin = timestamp
 
     logger.debug(f"  Total of {len(burst_times)} burst times recorded")
 
     if not burst_times:
-        return DEFAULT_DELAY
+        return SHORT_BACKOFF
 
     median_time = median(burst_times)
     logger.debug(f"  Median: {median_time}")
 
     return median_time
 
-def set_backoff_next_check(db, feed, entries=None):
+def get_backoff_next_check(db, feed, entries=None):
     feed_id = feed[0]
 
     timestamps = get_article_timestamps(db, feed_id, entries)
-    update_period = get_median_update_period(timestamps)
-    logger.debug(f"  Median update period: {update_period}")
 
     now = datetime.now(timezone.utc)
     logger.debug(f"  Now: {now}")
 
     if not timestamps:
-        next_check_time = now + DEFAULT_DELAY
+        next_check_time = now + LONG_BACKOFF
     else:
         most_recent_article = max(timestamps)
         time_since_last_article = now - most_recent_article
 
-        try:
-            suitable_delay = next(
-                (delay for delay in FETCH_DELAYS if delay > time_since_last_article),
-            )
-            logger.debug(f"  Suitable delay: {suitable_delay}")
+        logger.debug(f"  Most recent: {most_recent_article}")
+        logger.debug(f"  Time since last: {time_since_last_article}")
 
-            next_check_time = max(most_recent_article + suitable_delay, now + update_period)
-            next_check_time = min(next_check_time, now + MAX_DELAY)
+        update_period = get_median_update_period(timestamps)
+        logger.debug(f"  Median update period: {update_period}")
 
-        except StopIteration:
-            next_check_time = most_recent_article + FETCH_DELAYS[-1]
+        if time_since_last_article > MAX_BACKOFF:
+            # Do the slow feed strategy; just poll once per 24 hours
+            next_check_time = most_recent_article + SHORT_BACKOFF
             next_check_time = next_check_time.replace(year=now.year, month=now.month, day=now.day)
+            if next_check_time < now:
+                next_check_time += timedelta(hours=24)
+            logger.debug(f"  Slow strategy")
 
-            # If it's in the past, add 1 day
-            if next_check_time <= now + DEFAULT_DELAY:
-                next_check_time += timedelta(days=1)
+        elif time_since_last_article < SHORT_BACKOFF:
+            # Active period; wait the median time, capped to reasonable values
+            suitable_delay = max(MIN_BACKOFF, update_period)
+            suitable_delay = min(suitable_delay, LONG_BACKOFF)
+
+            next_check_time = now + suitable_delay
+            logger.debug(f"  Active strategy; delay {suitable_delay}")
+
+        else:
+            # Inactive period; wait max(SHORT_BACKOFF, median time), capped to reasonable values
+            suitable_delay = max(SHORT_BACKOFF, update_period)
+            suitable_delay = min(suitable_delay, LONG_BACKOFF)
+
+            next_check_time = now + suitable_delay
+            logger.debug(f"  Inactive strategy; delay {suitable_delay}")
 
     logger.debug(f"  Next check time: {next_check_time}")
 
@@ -232,7 +242,7 @@ def fetch_and_post(community_filter=None):
                 if response.status_code == 304:
                     logger.info(f"  Not modified since last check")
 
-                    next_check_time = set_backoff_next_check(db, feed)
+                    next_check_time = get_backoff_next_check(db, feed)
                     db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
                     
                     continue
@@ -253,7 +263,7 @@ def fetch_and_post(community_filter=None):
             except Exception as e:
                 logger.error(f"Exception while fetching feed {feed_url}: {str(e)}")
                 
-                next_check_time = set_backoff_next_check(db, feed)
+                next_check_time = get_backoff_next_check(db, feed)
                 db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
 
                 continue
@@ -261,7 +271,7 @@ def fetch_and_post(community_filter=None):
             logger.debug('  Feed fetched successfully')
 
             # Calculate update period
-            next_check_time = set_backoff_next_check(db, feed, rss.entries)
+            next_check_time = get_backoff_next_check(db, feed, rss.entries)
             db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
 
             logger.debug(f"  Last updated: {last_updated}")
@@ -298,7 +308,7 @@ def fetch_and_post(community_filter=None):
                 if hit_feed:
                     logger.info("  More articles in feed, requeueing with delay")
                     # Don't post multiple stories from a single feed without a delay
-                    next_check = datetime.now(timezone.utc) + POST_DELAY
+                    next_check = datetime.now(timezone.utc) + MIN_BACKOFF
                     logger.debug(f"    next_check reset to {next_check}")
                     db.update_feed_timestamps(feed_id, None, None, next_check)
                     break
