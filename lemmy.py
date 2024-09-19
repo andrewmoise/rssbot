@@ -78,9 +78,12 @@ class LemmyCommunicator:
     def url_to_username(self, url):
         try:
             parts = url.split('/')
-            instance = parts[2]
-            username = parts[4]
-            return f"{username}@{instance}"
+            if len(parts) <= 1:
+                return parts[0]
+            else:
+                instance = parts[2]
+                username = parts[4]
+                return f"{username}@{instance}"
         except IndexError:
             raise ValueError(f"Invalid URL format: {url}")
 
@@ -171,7 +174,10 @@ class LemmyCommunicator:
         }
         print(data)
 
-        self._make_request('post', url, headers=headers, json=data)
+        try:
+            self._make_request('post', url, headers=headers, json=data)
+        except requests.exceptions.HTTPError:
+            print('Got HTTP error')
 
     def create_comment(self, post_id, content):
         url = f'https://{self.server}/api/v3/comment'

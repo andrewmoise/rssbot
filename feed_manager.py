@@ -2,13 +2,11 @@ import argparse
 import feedparser
 import requests
 
+from config import Config
 from db import RSSFeedDB
 from fetch_and_post import USER_AGENT
 from fetch_icons import fetch_high_res_icons, find_best_icon
 from lemmy import LemmyCommunicator
-
-FREE_MOD_USER=10862
-PAYWALL_MOD_USER=10863
 
 def list_feeds(db):
     feeds = db.list_feeds()
@@ -16,6 +14,23 @@ def list_feeds(db):
         print(feed[0])
         for token in feed[1:]:
             print(f"  {token}")
+
+def appoint_mods(lemmy_api, community_id, is_paywall):
+    paywall_mod = lemmy_api.fetch_user_id(Config.LEMMY_PAYWALL_BOT)
+    free_mod = lemmy_api.fetch_user_id(Config.LEMMY_FREE_BOT)
+    if Config.LEMMY_ADDITIONAL_MODS == "":
+        additional_mods = []
+    else:
+        additional_mods = Config.LEMMY_ADDITIONAL_MODS.split(',')
+        additional_mods = map(lambda x: lemmy_api.fetch_user_id(x), additional_mods)
+
+    if is_paywall:
+        lemmy_api.appoint_mod(community_id, paywall_mod)
+    else:
+        lemmy_api.appoint_mod(community_id, free_mod)
+    for mod in additional_mods:
+        lemmy_api.appoint_mod(community_id, mod)
+
 
 def add_feed(db, feed_url, community_name, lemmy_api, is_paywall=False, appoint_mod=True, create_community=True, create_db_entry=True):
     # Fetch and parse the RSS feed
@@ -63,10 +78,7 @@ def add_feed(db, feed_url, community_name, lemmy_api, is_paywall=False, appoint_
 
     if community_id:
         if appoint_mod:
-            if is_paywall:
-                lemmy_api.appoint_mod(community_id, PAYWALL_MOD_USER)
-            else:
-                lemmy_api.appoint_mod(community_id, FREE_MOD_USER)
+            appoint_mods(lemmy_api, community_id, is_paywall)
 
         if create_db_entry:
             db.add_feed(feed_url, community_name, community_id, is_paywall=is_paywall)
@@ -104,13 +116,7 @@ def update_mods(db, lemmy_api):
         print(community_name)
 
         if community_id not in processed_communities:
-            if is_paywall:
-                lemmy_api.appoint_mod(community_id, PAYWALL_MOD_USER)  # Appoint paywall mod
-                print(f"  Appointed paywall mod for community ID {community_id}")
-            else:
-                lemmy_api.appoint_mod(community_id, FREE_MOD_USER)  # Appoint free mod
-                print(f"  Appointed free mod for community ID {community_id}")
-            
+            appoint_mods(lemmy_api, community_id, is_paywall)
             processed_communities.add(community_id)
         else:
             print(f"  Skipped community ID {community_id} (already processed)")

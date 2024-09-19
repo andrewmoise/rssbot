@@ -180,8 +180,8 @@ def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
 
     #lemmy_api = LemmyCommunicator()
-    lemmy_api_free = LemmyCommunicator(username=Config.LEMMY_FREE_USERNAME)
-    lemmy_api_paywall = LemmyCommunicator(username=Config.LEMMY_PAYWALL_USERNAME)
+    lemmy_api_free = LemmyCommunicator(username=Config.LEMMY_FREE_BOT)
+    lemmy_api_paywall = LemmyCommunicator(username=Config.LEMMY_PAYWALL_BOT)
 
     delay = 0 # First time through, no delay
     
