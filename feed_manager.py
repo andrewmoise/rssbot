@@ -1,6 +1,7 @@
 import argparse
 import feedparser
 import requests
+from urllib.parse import urlparse
 
 from config import Config
 from db import RSSFeedDB
@@ -15,22 +16,50 @@ def list_feeds(db):
         for token in feed[1:]:
             print(f"  {token}")
 
-def appoint_mods(lemmy_api, community_id, is_paywall):
+def parse_actor_id(actor_id):
+    """Parse an actor ID into instance and username."""
+    username, instance = actor_id.split('@')
+    return instance, username
+
+def create_lemmy_api_for_user(instance, username):
+    """Create a LemmyCommunicator instance for a specific user on a specific instance."""
+    return LemmyCommunicator(username, instance)
+
+def subscribe_to_community(lemmy_api, community_name):
+    """Subscribe to a community using the given LemmyCommunicator instance."""
+    try:
+        community_id = lemmy_api.fetch_community_id(f"{community_name}@{Config.LEMMY_SERVER}")
+        lemmy_api.subscribe_to_community(community_id)
+        print(f"Subscribed to {community_name}@{Config.LEMMY_SERVER} from {lemmy_api.server}")
+    except Exception as e:
+        print(f"Failed to subscribe to {community_name}@{Config.LEMMY_SERVER} from {lemmy_api.server}: {str(e)}")
+
+def appoint_mods(lemmy_api, community_name, community_id, is_paywall):
     paywall_mod = lemmy_api.fetch_user_id(Config.LEMMY_PAYWALL_BOT)
     free_mod = lemmy_api.fetch_user_id(Config.LEMMY_FREE_BOT)
+    
     if Config.LEMMY_ADDITIONAL_MODS == "":
         additional_mods = []
     else:
         additional_mods = Config.LEMMY_ADDITIONAL_MODS.split(',')
-        additional_mods = map(lambda x: lemmy_api.fetch_user_id(x), additional_mods)
-
+    
+    # Subscribe and appoint mods
+    for mod_actor_id in additional_mods:
+        instance, username = parse_actor_id(mod_actor_id)
+        mod_lemmy_api = create_lemmy_api_for_user(instance, username)
+        
+        # Subscribe to the community
+        subscribe_to_community(mod_lemmy_api, community_name)
+        
+        # Appoint as mod
+        mod_id = lemmy_api.fetch_user_id(mod_actor_id)
+        lemmy_api.appoint_mod(community_id, mod_id)
+    
+    # Appoint the main bot
     if is_paywall:
         lemmy_api.appoint_mod(community_id, paywall_mod)
     else:
         lemmy_api.appoint_mod(community_id, free_mod)
-    for mod in additional_mods:
-        lemmy_api.appoint_mod(community_id, mod)
-
 
 def add_feed(db, feed_url, community_name, lemmy_api, is_paywall=False, appoint_mod=True, create_community=True, create_db_entry=True):
     # Fetch and parse the RSS feed
@@ -78,7 +107,7 @@ def add_feed(db, feed_url, community_name, lemmy_api, is_paywall=False, appoint_
 
     if community_id:
         if appoint_mod:
-            appoint_mods(lemmy_api, community_id, is_paywall)
+            appoint_mods(lemmy_api, community_name, community_id, is_paywall)
 
         if create_db_entry:
             db.add_feed(feed_url, community_name, community_id, is_paywall=is_paywall)
@@ -116,7 +145,7 @@ def update_mods(db, lemmy_api):
         print(community_name)
 
         if community_id not in processed_communities:
-            appoint_mods(lemmy_api, community_id, is_paywall)
+            appoint_mods(lemmy_api, community_name, community_id, is_paywall)
             processed_communities.add(community_id)
         else:
             print(f"  Skipped community ID {community_id} (already processed)")

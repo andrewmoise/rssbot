@@ -19,12 +19,12 @@ def parse_datetime(date_str):
 class LemmyCommunicator:
     TOKEN_FILE_TEMPLATE = "{server}_{user}_token.pkl"
 
-    def __init__(self, username=None):
-        self.server = Config.LEMMY_SERVER
-        self.username = username if username else Config.LEMMY_USERNAME
+    def __init__(self, username=Config.LEMMY_USERNAME, server=Config.LEMMY_SERVER):
+        self.server = server
+        self.username = username
         self.token = self.get_token()
         if not self.token:
-            if Config.LEMMY_PASSWORD and not username:
+            if Config.LEMMY_PASSWORD:
                 password = Config.LEMMY_PASSWORD
             else:
                 password = getpass.getpass(f"Enter password for {self.username} on {self.server}: ")
@@ -74,6 +74,17 @@ class LemmyCommunicator:
             return community['community']['id']
         else:
             raise ValueError(f"Community '{self.community_name}' not found")
+
+    def subscribe_to_community(self, community_id, follow=True):
+        """Subscribe to or unsubscribe from a community."""
+        url = f'https://{self.server}/api/v3/community/follow'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        data = {
+            'community_id': community_id,
+            'follow': follow
+        }
+        response = self._make_request('post', url, headers=headers, json=data)
+        return response.json()['community_view']['subscribed']
 
     def url_to_username(self, url):
         try:
