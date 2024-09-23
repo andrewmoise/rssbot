@@ -93,7 +93,7 @@ class RSSFeedDB:
             ''', (article_url,))
             return cursor.fetchone()
 
-    def add_article(self, feed_id, article_url, headline, fetched_timestamp, lemmy_post_id):
+    def add_article(self, feed_id, article_url, headline, fetched_timestamp, lemmy_post_id, posted_timestamp=None):
         """Add a new article related to a specific RSS feed."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -101,6 +101,17 @@ class RSSFeedDB:
                 INSERT OR IGNORE INTO rss_articles (feed_id, article_url, headline, fetched_timestamp, lemmy_post_id)
                 VALUES (?, ?, ?, ?, ?)
             ''', (feed_id, article_url, headline, fetched_timestamp, lemmy_post_id))
+            conn.commit()
+
+    def update_article_post_id(self, article_id, lemmy_post_id):
+        """Update the posted_timestamp for an existing article."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE rss_articles
+                SET lemmy_post_id = ?
+                WHERE id = ?
+            ''', (lemmy_post_id, article_id))
             conn.commit()
 
     def get_articles_by_feed(self, feed_id, limit=None):
@@ -124,6 +135,18 @@ class RSSFeedDB:
             else:
                 cursor.execute(query, (feed_id,))
             return cursor.fetchall()
+
+    def get_unposted_article(self, feed_id):
+        """Get the first article with NULL posted_timestamp for a given feed."""
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM rss_articles 
+                WHERE feed_id = ? AND lemmy_post_id IS NULL
+                ORDER BY id ASC
+                LIMIT 1
+            ''', (feed_id,))
+            return cursor.fetchone()
 
     def list_feeds(self):
         """List all RSS feeds."""

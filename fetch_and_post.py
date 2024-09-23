@@ -176,10 +176,74 @@ def get_backoff_next_check(db, feed, entries=None):
 
     return next_check_time
 
+def network_fetch(feed_url, last_updated, etag):
+    request_headers = {'User-Agent': USER_AGENT}
+    if last_updated is not None:
+        logger.debug(f"  IMS header: {last_updated}")
+        request_headers['If-Modified-Since'] = last_updated
+    if etag is not None:
+        logger.debug(f"  ETag header: {etag}")
+        request_headers['If-None-Match'] = etag
+
+    try:
+        response = requests.get(feed_url, headers=request_headers, timeout=30)
+
+        if response.status_code == 304:
+            logger.info(f"  Not modified since last check")
+            return None, last_updated, etag
+
+        response.raise_for_status()
+
+        # Retrieve the last-modified and ETag headers
+        new_last_updated = response.headers.get('Last-Modified', last_updated)
+        new_etag = response.headers.get('ETag', etag)
+
+        if new_last_updated:
+            logger.debug(f"  Last-Modified: {new_last_updated}")
+        if new_etag:
+            logger.debug(f"  ETag: {new_etag}")
+
+        rss = feedparser.parse(response.content)
+        return rss, new_last_updated, new_etag
+
+    except Exception as e:
+        logger.error(f"Exception while fetching feed {feed_url}: {str(e)}")
+        return None, last_updated, etag
+
+def process_feed_entries(db, feed_id, rss):
+    logger.debug(f"Processing feed ID {feed_id}")
+    time_limit = datetime.now(timezone.utc) - POST_WINDOW
+
+    for entry in reversed(rss.entries):
+        if hasattr(entry, 'published'):
+            try:
+                published_date = parse_date_with_timezone(entry.published)
+            except ValueError as e:
+                logger.error(f"Date parsing error: {e} for date string: {entry.published}")
+                continue
+        else:
+            published_date = datetime.now(timezone.utc)
+
+        article_url = entry.link
+        headline = entry.title
+
+        if db.get_article_by_url(article_url):
+            continue
+
+        if published_date < time_limit:
+            continue
+
+        if re.match(BLACKLIST_RE, headline):
+            logger.debug(f"  Not posting {headline}, blacklisted")
+            continue
+
+        headline = trim_headline(headline)
+        logger.debug(f"  Adding article {article_url}")
+        db.add_article(feed_id, article_url, headline, datetime.now(timezone.utc), None)
+
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
 
-    #lemmy_api = LemmyCommunicator()
     lemmy_api_free = LemmyCommunicator(username=Config.LEMMY_FREE_BOT)
     lemmy_api_paywall = LemmyCommunicator(username=Config.LEMMY_PAYWALL_BOT)
 
@@ -227,91 +291,22 @@ def fetch_and_post(community_filter=None):
 
             logger.info(f"Processing feed: {feed_url}")
 
-            # Prepare headers with If-Modified-Since
-            request_headers = {'User-Agent': USER_AGENT}
-            if last_updated is not None:
-                logger.debug(f"  IMS header: {last_updated}")
-                request_headers['If-Modified-Since'] = last_updated
-            if etag is not None:
-                logger.debug(f"  ETag header: {etag}")
-                request_headers['If-None-Match'] = etag
+            # Check for unposted articles
+            unposted_article = db.get_unposted_article(feed_id)
 
-            try:
-                response = requests.get(feed_url, headers=request_headers, timeout=30)
-
-                if response.status_code == 304:
-                    logger.info(f"  Not modified since last check")
-
-                    next_check_time = get_backoff_next_check(db, feed)
-                    db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
-                    
-                    continue
-
-                response.raise_for_status()
-
-                # Retrieve the last-modified and ETag headers
-                last_updated = response.headers.get('Last-Modified')
-                if last_updated:
-                    logger.debug(f"  Last-Modified: {last_updated}")
-
-                etag = response.headers.get('ETag')
-                if etag:
-                    logger.debug(f"  ETag: {etag}")
-
-                rss = feedparser.parse(response.content)
-
-            except Exception as e:
-                logger.error(f"Exception while fetching feed {feed_url}: {str(e)}")
+            if not unposted_article:
+                # If no unposted articles, fetch new ones
+                logger.debug("  Network fetch")
+                rss, last_updated, etag = network_fetch(feed_url, last_updated, etag)
                 
-                next_check_time = get_backoff_next_check(db, feed)
-                db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
+                if rss:
+                    logger.debug("  Process feed entries")
+                    process_feed_entries(db, feed_id, rss)
+                    unposted_article = db.get_unposted_article(feed_id)
+                    logger.debug(f"  Unposted article: {unposted_article}")
 
-                continue
-            
-            logger.debug('  Feed fetched successfully')
-
-            # Calculate update period
-            next_check_time = get_backoff_next_check(db, feed, rss.entries)
-            db.update_feed_timestamps(feed_id, last_updated, etag, next_check_time)
-
-            logger.debug(f"  Last updated: {last_updated}")
-            logger.debug(f"  Next check: {next_check_time}")
-
-            time_limit = datetime.now(timezone.utc) - POST_WINDOW
-            hit_feed = False
-
-            for entry in reversed(rss.entries):
-                if hasattr(entry, 'published'):
-                    try:
-                        published_date = parse_date_with_timezone(entry.published)
-                    except ValueError as e:
-                        logger.error(f"Date parsing error: {e} for date string: {entry.published}")
-                        continue
-                else:
-                    published_date = datetime.now(timezone.utc)
-
-                article_url = entry.link
-                headline = entry.title
-
-                if db.get_article_by_url(article_url):
-                    continue
-
-                if published_date < time_limit:
-                    continue
-
-                if re.match(BLACKLIST_RE, headline):
-                    logger.debug(f"  Not posting {headline}, blacklisted")
-                    continue
-
-                headline = trim_headline(headline)
-
-                if hit_feed:
-                    logger.info("  More articles in feed, requeueing with delay")
-                    # Don't post multiple stories from a single feed without a delay
-                    next_check = datetime.now(timezone.utc) + MIN_BACKOFF
-                    logger.debug(f"    next_check reset to {next_check}")
-                    db.update_feed_timestamps(feed_id, None, None, next_check)
-                    break
+            if unposted_article:
+                article_id, _, article_url, headline, _, lemmy_post_id = unposted_article
 
                 logger.info(f"  Posting: {headline}")
                 logger.debug(f"    to {community_name}")
@@ -328,12 +323,20 @@ def fetch_and_post(community_filter=None):
                     continue
                     
                 if lemmy_post_id:
-                    db.add_article(feed_id, article_url, headline, datetime.now(timezone.utc), lemmy_post_id)
+                    db.update_article_post_id(article_id, lemmy_post_id)
                     logger.debug(f"    Posted successfully! Lemmy post ID: {lemmy_post_id}")
                 else:
                     logger.warning("    Could not post to Lemmy")
 
-                hit_feed = True
+            if db.get_unposted_article(feed_id):
+                next_check = datetime.now(timezone.utc) + MIN_BACKOFF
+                logger.debug(f"    More to post, next_check reset to {next_check}")
+                db.update_feed_timestamps(feed_id, last_updated, etag, next_check)
+            else:                            
+                next_check = get_backoff_next_check(db, feed, None)
+                logger.debug(f"    Nothing to post, next_check reset to {next_check}")
+                db.update_feed_timestamps(feed_id, last_updated, etag, next_check)
+
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch and post RSS feeds to Lemmy.')
