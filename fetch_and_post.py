@@ -239,7 +239,7 @@ def process_feed_entries(db, feed_id, rss):
 
         headline = trim_headline(headline)
         logger.debug(f"  Adding article {article_url}")
-        db.add_article(feed_id, article_url, headline, datetime.now(timezone.utc), None)
+        db.add_article(feed_id, article_url, headline, published_date, None)
 
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
