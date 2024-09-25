@@ -308,6 +308,14 @@ def fetch_and_post(community_filter=None):
             if unposted_article:
                 article_id, _, article_url, headline, _, lemmy_post_id = unposted_article
 
+                new_headline = re.sub('\n', ' ', headline)
+                new_headline = re.sub(r'<.*?>', '', new_headline)
+                new_headline = re.sub(r'&amp;', '&', new_headline)
+                new_headline = re.sub(r' *\|.*', '', new_headline)
+                if new_headline != headline:
+                    logger.debug(f"  Fixing {headline}")
+                    headline = new_headline
+
                 logger.info(f"  Posting: {headline}")
                 logger.debug(f"    to {community_name}")
 
