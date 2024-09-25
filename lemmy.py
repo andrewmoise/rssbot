@@ -190,13 +190,15 @@ class LemmyCommunicator:
         except requests.exceptions.HTTPError:
             print('Got HTTP error')
 
-    def create_comment(self, post_id, content):
+    def create_comment(self, post_id, content, parent_id=None):
         url = f'https://{self.server}/api/v3/comment'
         headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
         data = {
             'post_id': post_id,
             'content': content
         }
+        if parent_id is not None:
+            data['parent_id'] = parent_id
         response = self._make_request('post', url, headers=headers, json=data)
         return response.json()['comment_view']['comment']
 
@@ -205,7 +207,7 @@ class LemmyCommunicator:
         url = f'https://{self.server}/api/v3/private_message/list'
         headers = {'Authorization': f'Bearer {self.token}'}
         params = {
-            'unread_only': unread_only,
+            'unread_only': 'true' if unread_only else 'false',
             'page': page,
             'limit': limit
         }
@@ -234,7 +236,7 @@ class LemmyCommunicator:
         response = self._make_request('post', url, headers=headers, json=data)
         return response.json()['private_message_view']
 
-    def get_mentions(self, sort='New', page=1, limit=20, unread_only=False):
+    def get_mentions(self, sort='New', page=1, limit=20, unread_only=True):
         """Get mentions for the user."""
         url = f'https://{self.server}/api/v3/user/mention'
         headers = {'Authorization': f'Bearer {self.token}'}
@@ -242,7 +244,7 @@ class LemmyCommunicator:
             'sort': sort,
             'page': page,
             'limit': limit,
-            'unread_only': unread_only
+            'unread_only': 'true' if unread_only else 'false'
         }
         response = self._make_request('get', url, headers=headers, params=params)
         return response.json()['mentions']
