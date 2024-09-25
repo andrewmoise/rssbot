@@ -7,6 +7,7 @@ import re
 import requests
 from statistics import median
 import time
+import traceback
 from urllib.parse import urlparse
 
 from config import Config
@@ -241,15 +242,112 @@ def process_feed_entries(db, feed_id, rss):
         logger.debug(f"  Adding article {article_url}")
         db.add_article(feed_id, article_url, headline, published_date, None)
 
+def process_messages_and_mentions(api, db):
+    # Process private messages
+    private_messages = api.get_private_messages(unread_only=True)
+    for pm in private_messages:
+        logger.info(f"Received private message from {pm['creator']['name']}: {pm['private_message']['content']}")
+        process_commands(api, db, pm['private_message']['content'], pm['creator']['name'], is_private=True)
+        api.mark_private_message_as_read(pm['private_message']['id'])
+
+    # Process mentions
+    mentions = api.get_mentions(unread_only=True)
+    for mention in mentions:
+        logger.info(f"Received mention from {mention['creator']['name']} in post '{mention['post']['name']}': {mention['comment']['content']}")
+        process_commands(api, db, mention['comment']['content'], mention['creator']['name'], is_private=False)
+        api.mark_mention_as_read(mention['person_mention']['id'])
+
+def process_commands(api, db, content, sender, is_private):
+    response = []
+    command_pattern = r'!(\w+)(?:\s+([^!]+?))?(?=\s*!|\s*$)'
+    
+    commands = re.findall(command_pattern, content)
+    
+    if not commands:
+        response.append("No valid commands found.\n\n" + get_help_text())
+    else:
+        for command, args_str in commands:
+            args = args_str.strip().split()
+            
+            try:
+                if command == 'add':
+                    if len(args) == 2:
+                        rss_url, community = args
+                        result = add_feed(api, db, rss_url, community, sender)
+                        response.append(result)
+                    else:
+                        response.append("Invalid number of arguments for !add command.")
+                elif command == 'delete':
+                    if len(args) == 2:
+                        rss_url, community = args
+                        result = delete_feed(api, db, rss_url, community, sender)
+                        response.append(result)
+                    else:
+                        response.append("Invalid number of arguments for !delete command.")
+                elif command == 'list':
+                    if len(args) == 1:
+                        community = args[0]
+                        result = list_feeds(api, db, community, sender)
+                        response.append(result)
+                    else:
+                        response.append("Invalid number of arguments for !list command.")
+                elif command == 'help':
+                    response.append(get_help_text())
+                else:
+                    response.append(f"Unknown command: {command}")
+            except Exception as e:
+                logger.error(f"Error processing command '{command}': {str(e)}")
+                logger.debug(f"Full traceback: {traceback.format_exc()}")
+                response.append(f"An error occurred while processing the '{command}' command. Please try again later or contact the bot administrator if the problem persists.")
+
+    full_response = "\n\n".join(response)
+    send_response(api, sender, full_response, is_private)
+
+def add_feed(api, db, rss_url, community, sender):
+    # TODO: Implement feed addition logic
+    return f"Adding feed {rss_url} to community {community}"
+
+def delete_feed(api, db, rss_url, community, sender):
+    # TODO: Implement feed deletion logic
+    return f"Deleting feed {rss_url} from community {community}"
+
+def list_feeds(api, db, community, sender):
+    # TODO: Implement feed listing logic
+    return f"Listing feeds for community {community}"
+
+def get_help_text():
+    return """
+Available commands:
+!add {rss_url} {community}@{instance} - Add a new RSS feed
+!delete {rss_url} {community}@{instance} - Delete an existing RSS feed
+!list {community}@{instance} - List all feeds for a community
+!help - Show this help message
+
+You can include multiple commands in a single message, each on a new line.
+    """
+
+def send_response(api, recipient, message, is_private):
+    if is_private:
+        api.send_private_message(recipient, message)
+    else:
+        # TODO: Implement public reply logic
+        logger.info(f"Public reply to {recipient}: {message}")
+
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
 
     lemmy_api_free = LemmyCommunicator(username=Config.LEMMY_FREE_BOT)
     lemmy_api_paywall = LemmyCommunicator(username=Config.LEMMY_PAYWALL_BOT)
+    lemmy_api_bot = LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
 
     delay = 0 # First time through, no delay
     
     while True:
+        # First, process any messages
+        for api in [lemmy_api_free, lemmy_api_paywall, lemmy_api_bot]:
+            process_messages_and_mentions(api, db)
+
+        # Next, actually post things
         feeds = db.list_feeds()
 
         # Sleep until the nearest next_check time

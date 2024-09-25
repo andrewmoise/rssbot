@@ -200,6 +200,105 @@ class LemmyCommunicator:
         response = self._make_request('post', url, headers=headers, json=data)
         return response.json()['comment_view']['comment']
 
+    def get_private_messages(self, unread_only=False, page=1, limit=20):
+        """Fetch private messages for the user."""
+        url = f'https://{self.server}/api/v3/private_message/list'
+        headers = {'Authorization': f'Bearer {self.token}'}
+        params = {
+            'unread_only': unread_only,
+            'page': page,
+            'limit': limit
+        }
+        response = self._make_request('get', url, headers=headers, params=params)
+        return response.json()['private_messages']
+
+    def mark_private_message_as_read(self, private_message_id, read=True):
+        """Mark a private message as read or unread."""
+        url = f'https://{self.server}/api/v3/private_message/mark_as_read'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        data = {
+            'private_message_id': private_message_id,
+            'read': read
+        }
+        response = self._make_request('post', url, headers=headers, json=data)
+        return response.json()['private_message_view']
+
+    def send_private_message(self, recipient_id, content):
+        """Send a private message to a user."""
+        url = f'https://{self.server}/api/v3/private_message'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        data = {
+            'recipient_id': recipient_id,
+            'content': content
+        }
+        response = self._make_request('post', url, headers=headers, json=data)
+        return response.json()['private_message_view']
+
+    def get_mentions(self, sort='New', page=1, limit=20, unread_only=False):
+        """Get mentions for the user."""
+        url = f'https://{self.server}/api/v3/user/mention'
+        headers = {'Authorization': f'Bearer {self.token}'}
+        params = {
+            'sort': sort,
+            'page': page,
+            'limit': limit,
+            'unread_only': unread_only
+        }
+        response = self._make_request('get', url, headers=headers, params=params)
+        return response.json()['mentions']
+
+    def mark_mention_as_read(self, person_mention_id, read=True):
+        """Mark a mention as read or unread."""
+        url = f'https://{self.server}/api/v3/user/mention/mark_as_read'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        data = {
+            'person_mention_id': person_mention_id,
+            'read': read
+        }
+        response = self._make_request('post', url, headers=headers, json=data)
+        return response.json()
+
+    def reply_to_comment(self, post_id, content, parent_id=None):
+        """Create a comment in reply to another comment or post."""
+        url = f'https://{self.server}/api/v3/comment'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        data = {
+            'content': content,
+            'post_id': post_id,
+            'parent_id': parent_id
+        }
+        response = self._make_request('post', url, headers=headers, json=data)
+        return response.json()['comment_view']['comment']
+
+    def handle_messages_and_mentions(self, mark_as_read=False, auto_reply=False):
+        """
+        Iterate over all mentions and private messages for the user.
+        Optionally mark them as read and/or auto-reply.
+        """
+        # Handle private messages
+        private_messages = self.get_private_messages(unread_only=True)
+        for pm in private_messages:
+            print(f"Private message from {pm['creator']['name']}: {pm['private_message']['content']}")
+            
+            if mark_as_read:
+                self.mark_private_message_as_read(pm['private_message']['id'])
+            
+            if auto_reply:
+                reply_content = f"Thank you for your message, {pm['creator']['name']}. This is an automated response."
+                self.send_private_message(pm['creator']['id'], reply_content)
+
+        # Handle mentions
+        mentions = self.get_mentions(unread_only=True)
+        for mention in mentions:
+            print(f"Mention from {mention['creator']['name']} in post '{mention['post']['name']}': {mention['comment']['content']}")
+            
+            if mark_as_read:
+                self.mark_mention_as_read(mention['person_mention']['id'])
+            
+            if auto_reply:
+                reply_content = f"Thank you for mentioning me, {mention['creator']['name']}. This is an automated response."
+                self.reply_to_comment(mention['post']['id'], reply_content, parent_id=mention['comment']['id'])
+
     def _make_request(self, method, url, **kwargs):
         time.sleep(Config.REQUEST_DELAY)
         while True:

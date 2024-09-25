@@ -11,6 +11,7 @@ class Config:
     LEMMY_USERNAME = os.getenv('LEMMY_USERNAME')
     LEMMY_FREE_BOT = os.getenv('LEMMY_FREE_BOT')
     LEMMY_PAYWALL_BOT = os.getenv('LEMMY_PAYWALL_BOT')
+    LEMMY_BOT_BOT = os.getenv('LEMMY_BOT_BOT')
     LEMMY_ADDITIONAL_MODS = os.getenv('LEMMY_ADDITIONAL_MODS')
     LEMMY_PASSWORD = os.getenv('LEMMY_PASSWORD')
     LEMMY_COMMUNITY = os.getenv('LEMMY_COMMUNITY')
