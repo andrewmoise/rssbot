@@ -34,10 +34,7 @@ def subscribe_to_community(lemmy_api, community_name):
     except Exception as e:
         print(f"Failed to subscribe to {community_name}@{Config.LEMMY_SERVER} from {lemmy_api.server}: {str(e)}")
 
-def appoint_mods(lemmy_api, community_name, community_id, is_paywall):
-    paywall_mod = lemmy_api.fetch_user_id(Config.LEMMY_PAYWALL_BOT)
-    free_mod = lemmy_api.fetch_user_id(Config.LEMMY_FREE_BOT)
-    
+def appoint_mods(lemmy_api, community_name, community_id, bot_username):
     if Config.LEMMY_ADDITIONAL_MODS == "":
         additional_mods = []
     else:
@@ -56,12 +53,10 @@ def appoint_mods(lemmy_api, community_name, community_id, is_paywall):
         lemmy_api.appoint_mod(community_id, mod_id)
     
     # Appoint the main bot
-    if is_paywall:
-        lemmy_api.appoint_mod(community_id, paywall_mod)
-    else:
-        lemmy_api.appoint_mod(community_id, free_mod)
+    mod_user_id = lemmy_api.fetch_user_id(bot_username)
+    lemmy_api.appoint_mod(community_id, mod_user_id)
 
-def add_feed(db, feed_url, community_name, lemmy_api, is_paywall=False, appoint_mod=True, create_community=True, create_db_entry=True):
+def add_feed(db, feed_url, community_name, lemmy_api, bot_username, appoint_mod=True, create_community=True, create_db_entry=True):
     # Fetch and parse the RSS feed
     request_headers = {'User-Agent': USER_AGENT}
     response = requests.get(feed_url, headers=request_headers, timeout=30)
@@ -107,11 +102,11 @@ def add_feed(db, feed_url, community_name, lemmy_api, is_paywall=False, appoint_
 
     if community_id:
         if appoint_mod:
-            appoint_mods(lemmy_api, community_name, community_id, is_paywall)
+            appoint_mods(lemmy_api, community_name, community_id, bot_username)
 
         if create_db_entry:
-            db.add_feed(feed_url, community_name, community_id, is_paywall=is_paywall)
-            print(f"Added feed {feed_url} for community {community_name} with Lemmy ID {community_id}. Is paywall: {is_paywall}")
+            db.add_feed(feed_url, community_name, community_id, bot_username=bot_username)
+            print(f"Added feed {feed_url} for community {community_name} with Lemmy ID {community_id}. Bot account: {bot_username}")
     else:
         print("Skipped database entry due to failed community creation.")
 
@@ -123,29 +118,22 @@ def delete_feed(db, community_name):
     else:
         print(f"No feed found for community '{community_name}', no action taken.")
 
-def update_feed(db, community_name, new_feed_url, is_paywall):
-    """Update the feed URL and the is_paywall status for a given community name."""
-    db.update_feed_url(community_name, new_feed_url, is_paywall)
+def update_feed(db, community_name, new_feed_url, bot_username):
+    db.update_feed_url(community_name, new_feed_url, bot_username)
     print(f"Updated feed URL for community '{community_name}' to '{new_feed_url}'.")
-    if is_paywall is not None:
-        print(f"Updated is_paywall status to {is_paywall}.")
-    else:
-        print("Paywall status was not changed.")
+    print(f"Updated bot account to {bot_username}")
 
 def update_mods(db, lemmy_api):
-    """Update moderators for all communities based on their paywall status."""
     feeds = db.list_feeds()
     processed_communities = set()
     
     for feed in feeds:
         community_name = feed[2]
-        community_id = feed[3]  # Assuming community_id is at index 2
-        is_paywall = feed[7]    # Assuming is_paywall is at index 7
+        community_id = feed[3]
+        bot_username = feed[7]  # Assuming bot_username is at index 7
         
-        print(community_name)
-
         if community_id not in processed_communities:
-            appoint_mods(lemmy_api, community_name, community_id, is_paywall)
+            appoint_mods(lemmy_api, community_name, community_id, bot_username)
             processed_communities.add(community_id)
         else:
             print(f"  Skipped community ID {community_id} (already processed)")
@@ -157,8 +145,7 @@ def main():
     parser.add_argument('-na', '--no-appoint-mod', action='store_true', help='Do not appoint the admin mod after creating the community')
     parser.add_argument('-nc', '--no-create-community', action='store_true', help='Do not create the community in Lemmy')
     parser.add_argument('-ndb', '--no-database-entry', action='store_true', help='Do not create the database entry')
-    parser.add_argument('-p', '--paywall', action='store_true', help='Set the feed as a paywall (for add and update commands)')
-    parser.add_argument('-np', '--no-paywall', action='store_true', help='Set the feed as not a paywall (for update command)')
+    parser.add_argument('-b', '--bot-username', choices=['free', 'paywall', 'bot'], default='free', help='Specify the bot username')
     parser.add_argument('command', choices=['list', 'add', 'delete', 'update', 'update_mods'], help='Command to execute')
     parser.add_argument('feed_url', nargs='?', help='The URL of the RSS feed.')
     parser.add_argument('community_name', nargs='?', help='The name of the Lemmy community for add or update commands.')
@@ -166,14 +153,14 @@ def main():
     args = parser.parse_args()
 
     db = RSSFeedDB()
-    lemmy_api = LemmyCommunicator()
+    lemmy_api = LemmyCommunicator(Config.LEMMY_BOT_BOT)
 
     if args.command == 'list':
         list_feeds(db)
     elif args.command == 'add':
         if args.feed_url and args.community_name:
             add_feed(db, args.feed_url, args.community_name, lemmy_api, 
-                     is_paywall=args.paywall,
+                     bot_username=args.bot_username,
                      appoint_mod=not args.no_appoint_mod, 
                      create_community=not args.no_create_community, 
                      create_db_entry=not args.no_database_entry)
@@ -186,11 +173,7 @@ def main():
             print("Missing argument for delete. Please provide a community name.")
     elif args.command == 'update':
         if args.feed_url and args.community_name:
-            if args.paywall and args.no_paywall:
-                print("Error: Cannot specify both --paywall and --no-paywall.")
-            else:
-                is_paywall = True if args.paywall else (False if args.no_paywall else None)
-                update_feed(db, args.community_name, args.feed_url, is_paywall)
+            update_feed(db, args.community_name, args.feed_url, args.bot_username)
         else:
             print("Missing arguments for update. Please provide a feed URL and community name.")
     elif args.command == 'update_mods':

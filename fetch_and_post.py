@@ -336,16 +336,18 @@ def send_response(api, recipient, message, is_private):
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
 
-    lemmy_api_free = LemmyCommunicator(username=Config.LEMMY_FREE_BOT)
-    lemmy_api_paywall = LemmyCommunicator(username=Config.LEMMY_PAYWALL_BOT)
-    lemmy_api_bot = LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
+    lemmy_apis = {
+        'free': LemmyCommunicator(username=Config.LEMMY_FREE_BOT),
+        'paywall': LemmyCommunicator(username=Config.LEMMY_PAYWALL_BOT),
+        'bot': LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
+    }
 
     delay = 0 # First time through, no delay
     
     while True:
         # First, process any messages
-        for api in [lemmy_api_free, lemmy_api_paywall, lemmy_api_bot]:
-            process_messages_and_mentions(api, db)
+        #for api in lemmy_apis.values():
+        #    process_messages_and_mentions(api, db)
 
         # Next, actually post things
         feeds = db.list_feeds()
@@ -363,12 +365,8 @@ def fetch_and_post(community_filter=None):
         hit_servers = set()
 
         for feed in feeds:
-            feed_id, feed_url, community_name, community_id, last_updated, next_check, etag, is_paywall = feed
-
-            if is_paywall:
-                lemmy_api = lemmy_api_paywall
-            else:
-                lemmy_api = lemmy_api_free
+            feed_id, feed_url, community_name, community_id, last_updated, next_check, etag, bot_username = feed
+            lemmy_api = lemmy_apis[bot_username]
 
             # Skip feeds not in the community filter
             if community_filter and community_name not in community_filter:

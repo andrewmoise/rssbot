@@ -19,7 +19,7 @@ def parse_datetime(date_str):
 class LemmyCommunicator:
     TOKEN_FILE_TEMPLATE = "{server}_{user}_token.pkl"
 
-    def __init__(self, username=Config.LEMMY_USERNAME, server=Config.LEMMY_SERVER):
+    def __init__(self, username, server=Config.LEMMY_SERVER):
         self.server = server
         self.username = username
         self.token = self.get_token()
