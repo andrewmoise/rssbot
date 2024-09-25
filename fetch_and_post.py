@@ -406,6 +406,7 @@ def fetch_and_post(community_filter=None):
                 new_headline = re.sub(r'<.*?>', '', new_headline)
                 new_headline = re.sub(r'&amp;', '&', new_headline)
                 new_headline = re.sub(r' *\|.*', '', new_headline)
+                new_headline = re.sub(r'^Pluralistic: +(.*?) +\(\d+ \w+ \d+\)$', '\1', new_headline)
                 if new_headline != headline:
                     logger.debug(f"  Fixing {headline}")
                     headline = new_headline
