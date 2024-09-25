@@ -93,7 +93,7 @@ class RSSFeedDB:
             ''', (article_url,))
             return cursor.fetchone()
 
-    def add_article(self, feed_id, article_url, headline, fetched_timestamp, lemmy_post_id, posted_timestamp=None):
+    def add_article(self, feed_id, article_url, headline, fetched_timestamp, lemmy_post_id):
         """Add a new article related to a specific RSS feed."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
