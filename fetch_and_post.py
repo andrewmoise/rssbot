@@ -22,7 +22,7 @@ SHORT_BACKOFF = timedelta(hours=2)
 LONG_BACKOFF = timedelta(hours=24)
 MAX_BACKOFF = timedelta(days=4)
 
-BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*|Today.s Wordle.*|Wordle today:.*|.*NYT Connections.*|.*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*|Daily Deal:.*'
+BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*|Today.s Wordle.*|Wordle today:.*|.*NYT Connections.*|.*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*|Daily Deal:.*|Shop our .*'
 
 POST_WINDOW = timedelta(days=3) # Max age of articles to post
 
