@@ -221,7 +221,13 @@ def process_feed_entries(db, feed_id, rss):
                 published_date = parse_date_with_timezone(entry.published)
             except ValueError as e:
                 logger.error(f"Date parsing error: {e} for date string: {entry.published}")
-                continue
+                published_date = datetime.now(timezone.utc)
+        elif hasattr(entry, 'updated'):
+            try:
+                published_date = parse_date_with_timezone(entry.updated)
+            except ValueError as e:
+                logger.error(f"Date parsing error: {e} for date string: {entry.published}")
+                published_date = datetime.now(timezone.utc)
         else:
             published_date = datetime.now(timezone.utc)
 
