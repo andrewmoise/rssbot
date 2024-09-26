@@ -1,3 +1,4 @@
+import asyncio
 import argparse
 import dateparser
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,7 @@ from urllib.parse import urlparse
 from config import Config
 from db import RSSFeedDB
 from lemmy import LemmyCommunicator
+from lemmy_websocket import wait_for_lemmy_events
 
 USER_AGENT = 'Lemmy RSSBot'
 # USER_AGENT = 'Wget/1.20.3 (linux-gnu)'
@@ -263,7 +265,7 @@ def process_messages_and_mentions(api, db):
         logger.info(f"Received mention from {mention['creator']['name']} in post '{mention['post']['name']}': {mention['comment']['content']}")
         response = process_commands(api, db, mention['comment']['content'], mention['creator']['name'], is_private=False)
         api.mark_mention_as_read(mention['person_mention']['id'])
-        api.create_comment(mention['post']['id'], mention['comment']['id'])
+        api.create_comment(mention['post']['id'], response, mention['comment']['id'])
 
 def process_commands(api, db, content, sender, is_private):
     response = []
@@ -336,7 +338,7 @@ Available commands:
 You can include multiple commands in a single message, each on a new line.
     """
 
-def fetch_and_post(community_filter=None):
+async def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
 
     lemmy_apis = {
@@ -345,15 +347,18 @@ def fetch_and_post(community_filter=None):
         'bot': LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
     }
 
-    delay = 0 # First time through, no delay
+    lemmy_ws = []
+    for api in lemmy_apis.values():
+        ws = await api.create_websocket()
+        await ws.connect()
+        await ws.subscribe("PrivateMessage")
+        await ws.subscribe("PersonMention")
+        lemmy_ws.append(ws)
+
+    delay = 0  # First time through, no delay
     
     while True:
         logger.info('Processing messages')
-        # First, process any messages
-        for api in lemmy_apis.values():
-            process_messages_and_mentions(api, db)
-
-        # Next, actually post things
         feeds = db.list_feeds()
 
         # Sleep until the nearest next_check time
@@ -363,9 +368,19 @@ def fetch_and_post(community_filter=None):
             delay = int(max(delay, (next_check_time - datetime.now(timezone.utc)).total_seconds()))
 
         logger.info(f"  Sleeping for {delay} seconds")
-        time.sleep(delay+1)
-        delay = 60 # Next time through, sleep at least 1 minute
-        
+
+        # Sleep, but wake up and handle if we get notifications
+        event = await wait_for_lemmy_events(lemmy_ws, {"PrivateMessage", "PersonMention"}, timeout=delay)
+        if delay == 0 or event is not None:
+            print("Processing messages")
+            while True:
+                event = await wait_for_lemmy_events(lemmy_ws, {"PrivateMessage", "PersonMention"}, timeout=0)
+                if event is None:
+                    break
+            process_messages_and_mentions(api, db, event['event'])
+
+        delay = 60  # Next time through, sleep at least 1 minute
+
         hit_servers = set()
 
         for feed in feeds:
@@ -446,8 +461,7 @@ def fetch_and_post(community_filter=None):
                 logger.debug(f"    Nothing to post, next_check reset to {next_check}")
                 db.update_feed_timestamps(feed_id, last_updated, etag, next_check)
 
-
-def main():
+async def main():
     parser = argparse.ArgumentParser(description='Fetch and post RSS feeds to Lemmy.')
     parser.add_argument('-c', '--communities', type=str, help='Comma-separated list of community IDs to update')
 
@@ -455,7 +469,7 @@ def main():
 
     community_filter = args.communities.split(',') if args.communities else None
 
-    fetch_and_post(community_filter)
+    await fetch_and_post(community_filter)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
