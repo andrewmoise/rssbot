@@ -14,10 +14,8 @@ from urllib.parse import urlparse
 from config import Config
 from db import RSSFeedDB
 from lemmy import LemmyCommunicator
-from lemmy_websocket import wait_for_lemmy_events
 
 USER_AGENT = 'Lemmy RSSBot'
-# USER_AGENT = 'Wget/1.20.3 (linux-gnu)'
 
 MIN_BACKOFF = timedelta(minutes=5)
 SHORT_BACKOFF = timedelta(hours=2)
@@ -347,18 +345,9 @@ async def fetch_and_post(community_filter=None):
         'bot': LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
     }
 
-    lemmy_ws = []
-    for api in lemmy_apis.values():
-        ws = await api.create_websocket()
-        await ws.connect()
-        await ws.subscribe("PrivateMessage")
-        await ws.subscribe("PersonMention")
-        lemmy_ws.append(ws)
-
     delay = 0  # First time through, no delay
     
     while True:
-        logger.info('Processing messages')
         feeds = db.list_feeds()
 
         # Sleep until the nearest next_check time
@@ -369,17 +358,12 @@ async def fetch_and_post(community_filter=None):
 
         logger.info(f"  Sleeping for {delay} seconds")
 
-        # Sleep, but wake up and handle if we get notifications
-        event = await wait_for_lemmy_events(lemmy_ws, {"PrivateMessage", "PersonMention"}, timeout=delay)
-        if delay == 0 or event is not None:
-            print("Processing messages")
-            while True:
-                event = await wait_for_lemmy_events(lemmy_ws, {"PrivateMessage", "PersonMention"}, timeout=0)
-                if event is None:
-                    break
-            process_messages_and_mentions(api, db, event['event'])
-
+        time.sleep(delay)
         delay = 60  # Next time through, sleep at least 1 minute
+
+        logger.info('Processing messages')
+        for api in lemmy_apis.values():
+            process_messages_and_mentions(api, db)
 
         hit_servers = set()
 
