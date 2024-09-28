@@ -6,7 +6,6 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from config import Config
-from lemmy_websocket import LemmyWebSocket
 
 def parse_datetime(date_str):
     """Parse datetime string into a datetime object."""
@@ -53,11 +52,6 @@ class LemmyCommunicator:
         token = response.json()['jwt']
         self.save_token(token)
         return token
-
-    async def create_websocket(self) -> LemmyWebSocket:
-        ws = LemmyWebSocket(self.server, self.token)
-        await ws.connect()
-        return ws
 
     def fetch_user_id(self, actor_id):
         url = f'https://{self.server}/api/v3/user'
