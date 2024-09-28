@@ -64,14 +64,25 @@ class LemmyCommunicator:
         else:
             raise ValueError(f"User '{actor_id}' not found")
 
-    def fetch_community_id(self, community_name):
+    def fetch_community(self, community_name):
         url = f'https://{self.server}/api/v3/community'
         headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
         params = {'name': community_name}
         response = self._make_request('get', url, headers=headers, params=params)
         community = response.json().get('community_view')
         if community:
-            return community['community']['id']
+            return community
+        else:
+            raise ValueError(f"Community '{self.community_name}' not found")
+
+    def fetch_community_moderators(self, community_name):
+        url = f'https://{self.server}/api/v3/community'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        params = {'name': community_name}
+        response = self._make_request('get', url, headers=headers, params=params)
+        community = response.json().get('moderators')
+        if community:
+            return community
         else:
             raise ValueError(f"Community '{self.community_name}' not found")
 

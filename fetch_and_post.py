@@ -22,6 +22,8 @@ SHORT_BACKOFF = timedelta(hours=2)
 LONG_BACKOFF = timedelta(hours=24)
 MAX_BACKOFF = timedelta(days=4)
 
+MESSAGE_POLL_INTERVAL = timedelta(seconds=60)
+
 BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*|Today.s Wordle.*|Wordle today:.*|.*NYT Connections.*|.*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*|Daily Deal:.*|Shop our .*'
 
 POST_WINDOW = timedelta(days=3) # Max age of articles to post
@@ -249,6 +251,8 @@ def process_feed_entries(db, feed_id, rss):
         db.add_article(feed_id, article_url, headline, published_date, None)
 
 def process_messages_and_mentions(api, db):
+    logger.info("Polling for messages.")
+
     # Process private messages
     private_messages = api.get_private_messages(unread_only=True)
     for pm in private_messages:
@@ -265,52 +269,98 @@ def process_messages_and_mentions(api, db):
         api.mark_mention_as_read(mention['person_mention']['id'])
         api.create_comment(mention['post']['id'], response, mention['comment']['id'])
 
-def process_commands(api, db, content, sender, is_private):
-    response = []
-    command_pattern = r'!(\w+)(?:\s+([^!]+?))?(?=\s*!|\s*$)'
-    
-    commands = re.findall(command_pattern, content)
-    result = 'Nulled out for test'
+def check_moderator(api, user_name, community_name):
+    logger.debug(f"Checking {user_name} moderates {community_name}")
+    moderators = api.fetch_community_moderators(community_name)
+    logger.debug("All data:")
+    logger.debug(moderators)
+    for mod in moderators:
+        if mod['moderator']['name'] == user_name:
+            logger.debug(f" Got it: {user_name}")
+            return True
+    return False
 
-    if not commands:
-        response.append("No valid commands found.")
-        response.append(get_help_text())
-    else:
-        for command, args_str in commands:
-            args = args_str.strip().split()
-            
-            try:
-                if command == 'add':
-                    if len(args) == 2:
-                        rss_url, community = args
+def process_commands(api, db, content, sender_name, is_private):
+    response = []
+    for line in content.split('\n'):
+        match = re.search(r'\/(\w+)(.*)', line)
+        if not match:
+            continue
+
+        command = match.group(1)
+        args_str = match.group(2)
+        args = args_str.strip().split()
+        
+        logger.info(f"Found command: {command}({', '.join(args)})")
+        try:
+            if command == 'add':
+                response.append("> " + line)
+                if len(args) == 2:
+                    rss_url, community = args
+                    community = community.lstrip('!')
+                    if check_moderator(api, sender_name, community):
+                        logger.info("Would succeed")
                         #result = add_feed(api, db, rss_url, community, sender)
-                        response.append(result)
+                        # append to response
                     else:
-                        response.append("Invalid number of arguments for !add command.")
-                elif command == 'delete':
-                    if len(args) == 2:
-                        rss_url, community = args
-                        #result = delete_feed(api, db, rss_url, community, sender)
-                        response.append(result)
-                    else:
-                        response.append("Invalid number of arguments for !delete command.")
-                elif command == 'list':
-                    if len(args) == 1:
-                        community = args[0]
-                        #result = list_feeds(api, db, community, sender)
-                        response.append(result)
-                    else:
-                        response.append("Invalid number of arguments for !list command.")
-                elif command == 'help':
-                    response.append(get_help_text())
+                        logger.info("Would fail")
+                        response.append(f"{sender_name} must be a moderator of {community} to make changes.")
                 else:
-                    response.append(f"Unknown command: {command}")
-            except Exception as e:
-                logger.error(f"Error processing command '{command}': {str(e)}")
-                logger.debug(f"Full traceback: {traceback.format_exc()}")
-                response.append(f"An error occurred while processing the '{command}' command. Please try again later or contact the bot administrator if the problem persists.")
+                    response.append("Invalid number of arguments for /add command.")
+            elif command == 'delete':
+                response.append("> " + line)
+                if len(args) == 2:
+                    rss_url, community = args
+                    community = community.lstrip('!')
+                    if check_moderator(api, sender_name, community):
+                        logger.info("Would succeed")
+                        #result = delete_feed(api, db, rss_url, community, sender)
+                        # append to response
+                    else:
+                        logger.info("Would fail")
+                        response.append(f"{sender_name} must be a moderator of {community} to make changes.")
+                else:
+                    response.append("Invalid number of arguments for /delete command.")
+            elif command == 'list':
+                response.append("> " + line)
+                if len(args) == 1:
+                    count = 0
+                    community = args[0]
+                    all_feeds = db.list_feeds()
+                    for feed in all_feeds:
+                        if '@' in feed[2]:
+                            feed_community = feed[2]
+                        else:
+                            feed_community = f"{feed[2]}@{Config.LEMMY_SERVER}"
+                        logger.debug(f"  Compare {feed_community} {community}")
+                        if feed_community == community:
+                            logger.debug("    match!")
+                            count += 1
+                            response.append("* " + feed[1])
+
+                    if count == 0:
+                        response.append(f"No feed found for {community}")
+                    else:
+                        response[-count].insert(0, "Feeds active for {community}:\n")
+                else:
+                    response.append("Invalid number of arguments for /list command.")
+            elif command == 'help':
+                response.append("> " + line)
+                response.append(get_help_text())
+            else:
+                response.append("> " + line)
+                response.append(f"Unknown command: {command}")
+        except Exception as e:
+            logger.error(f"Error processing command '{command}': {str(e)}")
+            logger.debug(f"Full traceback: {traceback.format_exc()}")
+            response.append(f"An error occurred while processing the '{command}' command. Please try again later or contact the bot administrator if the problem persists.")
+
+    if not response:
+        response.append("No commands found. Did you mean to send me RSS commands?")
+        response.append(get_help_text())
 
     full_response = "\n\n".join(response)
+    logger.debug(f"Sending response: {full_response}")
     return full_response
 
 def add_feed(api, db, rss_url, community, sender):
@@ -328,10 +378,10 @@ def list_feeds(api, db, community, sender):
 def get_help_text():
     return """
 Available commands:
-!add {rss_url} {community}@{instance} - Add a new RSS feed
-!delete {rss_url} {community}@{instance} - Delete an existing RSS feed
-!list {community}@{instance} - List all feeds for a community
-!help - Show this help message
+* /add {rss_url} {community}@{instance} - Add a new RSS feed
+* /delete {rss_url} {community}@{instance} - Delete an existing RSS feed
+* /list {community}@{instance} - List all feeds for a community
+* /help - Show this help message
 
 You can include multiple commands in a single message, each on a new line.
     """
@@ -345,25 +395,26 @@ async def fetch_and_post(community_filter=None):
         'bot': LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
     }
 
-    delay = 0  # First time through, no delay
-    
+    next_loop = datetime.now(timezone.utc)
+
     while True:
         feeds = db.list_feeds()
 
         # Sleep until the nearest next_check time
         next_check_times = [parse_date_with_timezone(feed[5]) for feed in feeds if feed[5]]
         if next_check_times:
-            next_check_time = min(next_check_times)
-            delay = int(max(delay, (next_check_time - datetime.now(timezone.utc)).total_seconds()))
+            next_loop = min(next_check_times + [next_loop])
 
-        logger.info(f"  Sleeping for {delay} seconds")
+        while next_loop - datetime.now(timezone.utc) > MESSAGE_POLL_INTERVAL:
+            logger.info(f"  Waiting for {next_loop - datetime.now(timezone.utc)} seconds...")
+            time.sleep(MESSAGE_POLL_INTERVAL.total_seconds())
+            for api in lemmy_apis.values():
+                process_messages_and_mentions(api, db)
+        else:
+            for api in lemmy_apis.values():
+                process_messages_and_mentions(api, db)
 
-        time.sleep(delay)
-        delay = 60  # Next time through, sleep at least 1 minute
-
-        logger.info('Processing messages')
-        for api in lemmy_apis.values():
-            process_messages_and_mentions(api, db)
+        next_loop = datetime.now(timezone.utc) + MESSAGE_POLL_INTERVAL
 
         hit_servers = set()
 
