@@ -110,13 +110,15 @@ def add_feed(db, feed_url, community_name, lemmy_api, bot_username, appoint_mod=
     else:
         print("Skipped database entry due to failed community creation.")
 
-def delete_feed(db, community_name):
+def delete_feed(db, filter):
     """Delete a feed based on the community name."""
-    changes = db.remove_feed(community_name)
-    if changes > 0:
-        print(f"Deleted feed(s) for community '{community_name}'.")
-    else:
-        print(f"No feed found for community '{community_name}', no action taken.")
+    print(f"Deleting feeds for {filter}")
+
+    changes = db.remove_feed(community_name=filter)
+    print(f"  {changes} by community name")
+    
+    changes = db.remove_feed(feed_url=filter)
+    print(f"  {changes} by feed URL")
 
 def update_feed(db, community_name, new_feed_url, bot_username):
     db.update_feed_url(community_name, new_feed_url, bot_username)

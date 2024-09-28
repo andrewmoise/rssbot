@@ -250,14 +250,14 @@ def process_feed_entries(db, feed_id, rss):
         logger.debug(f"  Adding article {article_url}")
         db.add_article(feed_id, article_url, headline, published_date, None)
 
-def process_messages_and_mentions(api, db):
+def process_messages_and_mentions(api, db, bot_username):
     logger.info("Polling for messages.")
 
     # Process private messages
     private_messages = api.get_private_messages(unread_only=True)
     for pm in private_messages:
         logger.info(f"Received private message from {pm['creator']['name']}: {pm['private_message']['content']}")
-        response = process_commands(api, db, pm['private_message']['content'], pm['creator']['name'], is_private=True)
+        response = process_commands(api, db, pm['private_message']['content'], pm['creator']['name'], bot_username)
         api.mark_private_message_as_read(pm['private_message']['id'])
         api.send_private_message(pm['creator']['id'], response)
 
@@ -265,7 +265,7 @@ def process_messages_and_mentions(api, db):
     mentions = api.get_mentions()
     for mention in mentions:
         logger.info(f"Received mention from {mention['creator']['name']} in post '{mention['post']['name']}': {mention['comment']['content']}")
-        response = process_commands(api, db, mention['comment']['content'], mention['creator']['name'], is_private=False)
+        response = process_commands(api, db, mention['comment']['content'], mention['creator']['name'], bot_username)
         api.mark_mention_as_read(mention['person_mention']['id'])
         api.create_comment(mention['post']['id'], response, mention['comment']['id'])
 
@@ -280,7 +280,7 @@ def check_moderator(api, user_name, community_name):
             return True
     return False
 
-def process_commands(api, db, content, sender_name, is_private):
+def process_commands(api, db, content, sender_name, bot_username):
     response = []
     for line in content.split('\n'):
         match = re.search(r'\/(\w+)(.*)', line)
@@ -296,15 +296,23 @@ def process_commands(api, db, content, sender_name, is_private):
             if command == 'add':
                 response.append("> " + line)
                 if len(args) == 2:
-                    rss_url, community = args
-                    community = community.lstrip('!')
-                    if check_moderator(api, sender_name, community):
-                        logger.info("Would succeed")
-                        #result = add_feed(api, db, rss_url, community, sender)
-                        # append to response
+                    rss_url, community_name = args
+                    community_name = community_name.lstrip('!')
+                    community_id = api.resolve_community(community_name)
+                    if community_id is not None:
+                        if check_moderator(api, sender_name, community_name):
+                            logger.info("Would succeed")
+                        else:
+                            logger.info("Would fail")
+                            response.append(f"{sender_name} must be a moderator of {community_name} to make changes.")
+                        community_id = api.fetch_community_id(community_name)
+                        if community_id is None:
+                            response.append(f"Could not find community {community_name}")
+                        else:
+                            db.add_feed(rss_url, community_name, community_id, bot_username=bot_username)
+                            response.append(f"Added {rss_url} to {community_name}")
                     else:
-                        logger.info("Would fail")
-                        response.append(f"{sender_name} must be a moderator of {community} to make changes.")
+                        response.append(f"Could not find {community_name}")
                 else:
                     response.append("Invalid number of arguments for /add command.")
             elif command == 'delete':
@@ -314,8 +322,11 @@ def process_commands(api, db, content, sender_name, is_private):
                     community = community.lstrip('!')
                     if check_moderator(api, sender_name, community):
                         logger.info("Would succeed")
-                        #result = delete_feed(api, db, rss_url, community, sender)
-                        # append to response
+                        changes = db.remove_feed(community_name=community, feed_url=rss_url)
+                        if changes == 0:
+                            response.append('No feeds found matching those criteria.')
+                        else:
+                            response.append(f"Deleted {changes} feed{'s' if changes > 1 else ''}")
                     else:
                         logger.info("Would fail")
                         response.append(f"{sender_name} must be a moderator of {community} to make changes.")
@@ -341,7 +352,8 @@ def process_commands(api, db, content, sender_name, is_private):
                     if count == 0:
                         response.append(f"No feed found for {community}")
                     else:
-                        response[-count].insert(0, "Feeds active for {community}:\n")
+                        # We want a single newline only
+                        response[-count] = "Feeds active for {community}:\n" + response[-count]
                 else:
                     response.append("Invalid number of arguments for /list command.")
             elif command == 'help':
@@ -408,11 +420,11 @@ async def fetch_and_post(community_filter=None):
         while next_loop - datetime.now(timezone.utc) > MESSAGE_POLL_INTERVAL:
             logger.info(f"  Waiting for {next_loop - datetime.now(timezone.utc)} seconds...")
             time.sleep(MESSAGE_POLL_INTERVAL.total_seconds())
-            for api in lemmy_apis.values():
-                process_messages_and_mentions(api, db)
+            for bot_username, api in lemmy_apis.items():
+                process_messages_and_mentions(api, db, bot_username)
         else:
-            for api in lemmy_apis.values():
-                process_messages_and_mentions(api, db)
+            for bot_username, api in lemmy_apis.items():
+                process_messages_and_mentions(api, db, bot_username)
 
         next_loop = datetime.now(timezone.utc) + MESSAGE_POLL_INTERVAL
 

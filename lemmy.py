@@ -64,14 +64,24 @@ class LemmyCommunicator:
         else:
             raise ValueError(f"User '{actor_id}' not found")
 
-    def fetch_community(self, community_name):
+    def resolve_community(self, community_name):
+        url = f'https://{self.server}/api/v3/resolve_object'
+        headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
+        short_name, instance = community_name.split('@')
+        params = {'q': f"https://{instance}/c/{short_name}"}
+        #params = {'q': community_name, 'type_': 'Communities'}
+        response = self._make_request('get', url, headers=headers, params=params)
+        community = response.json().get('community')
+        return community
+
+    def fetch_community_id(self, community_name):
         url = f'https://{self.server}/api/v3/community'
         headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
         params = {'name': community_name}
         response = self._make_request('get', url, headers=headers, params=params)
         community = response.json().get('community_view')
         if community:
-            return community
+            return community['community']['id']
         else:
             raise ValueError(f"Community '{self.community_name}' not found")
 
@@ -80,11 +90,11 @@ class LemmyCommunicator:
         headers = {'Authorization': f'Bearer {self.token}', 'Content-Type': 'application/json'}
         params = {'name': community_name}
         response = self._make_request('get', url, headers=headers, params=params)
-        community = response.json().get('moderators')
-        if community:
-            return community
+        moderators = response.json().get('moderators')
+        if moderators:
+            return moderators
         else:
-            raise ValueError(f"Community '{self.community_name}' not found")
+            raise ValueError(f"Community '{community_name}' not found")
 
     def subscribe_to_community(self, community_id, follow=True):
         """Subscribe to or unsubscribe from a community."""

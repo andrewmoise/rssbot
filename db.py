@@ -151,19 +151,27 @@ class RSSFeedDB:
             cursor.execute('SELECT * FROM rss_feeds')
             return cursor.fetchall()
 
-    def remove_feed(self, community_name):
-        """Remove a feed based on the community name."""
+    def remove_feed(self, community_name=None, feed_url=None):
+        """Remove a feed based on the community name and/or feed URL."""
+        if community_name is None and feed_url is None:
+            raise ValueError("Cannot remove a feed without limits specified")
+
+        query = 'DELETE FROM rss_feeds WHERE'
+        params = []
+
+        if community_name is not None:
+            query += ' community_name = ?'
+            params.append(community_name)
+
+        if feed_url is not None:
+            if params:
+                query += ' AND'
+            query += ' feed_url = ?'
+            params.append(feed_url)
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                DELETE FROM rss_feeds WHERE community_name = ?
-            ''', (community_name,))
-            cursor.execute('''
-                DELETE FROM rss_feeds WHERE feed_url = ?
-            ''', (community_name,))
-            cursor.execute('''
-                DELETE FROM rss_feeds WHERE id = ?
-            ''', (community_name,))
+            cursor.execute(query, tuple(params))
             changes = conn.total_changes
             conn.commit()
         return changes  # Returns the number of rows deleted
