@@ -13,13 +13,14 @@ class RSSFeedDB:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS rss_feeds (
                     id INTEGER PRIMARY KEY,
-                    feed_url TEXT UNIQUE,
+                    feed_url TEXT,
                     community_name TEXT,
                     community_id INTEGER,
                     last_updated_header TEXT,
                     next_check TIMESTAMP,
                     etag TEXT,
-                    bot_username TEXT NOT NULL
+                    bot_username TEXT NOT NULL,
+                    UNIQUE(feed_url, community_id)
                 )
             ''')
             cursor.execute('''
@@ -39,7 +40,7 @@ class RSSFeedDB:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO rss_feeds (feed_url, community_name, community_id, last_updated_header, etag, next_check, bot_username)
+                INSERT OR REPLACE INTO rss_feeds (feed_url, community_name, community_id, last_updated_header, etag, next_check, bot_username)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (feed_url, community_name, community_id, last_updated_header, etag, next_check, bot_username))
             conn.commit()
@@ -181,22 +182,39 @@ def migrate_database():
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         
-        # Check if the bot_username column exists in rss_feeds
-        cursor.execute("PRAGMA table_info(rss_feeds)")
-        columns = [column[1] for column in cursor.fetchall()]
+        # Check if the unique constraint exists
+        cursor.execute('''
+            SELECT COUNT(*) FROM sqlite_master 
+            WHERE type='index' AND name='idx_feed_url_community_id'
+        ''')
+        constraint_exists = cursor.fetchone()[0] > 0
         
-        if 'bot_username' not in columns:
-            # Add the bot_username column to rss_feeds
-            cursor.execute('ALTER TABLE rss_feeds ADD COLUMN bot_username TEXT NOT NULL DEFAULT "free"')
+        if not constraint_exists:
+            # Create a new table with the desired structure
+            cursor.execute('''
+                CREATE TABLE rss_feeds_new (
+                    id INTEGER PRIMARY KEY,
+                    feed_url TEXT,
+                    community_name TEXT,
+                    community_id INTEGER,
+                    last_updated_header TEXT,
+                    next_check TIMESTAMP,
+                    etag TEXT,
+                    bot_username TEXT NOT NULL,
+                    UNIQUE(feed_url, community_id)
+                )
+            ''')
             
-            # Migrate existing data
-            cursor.execute("UPDATE rss_feeds SET bot_username = 'paywall' WHERE is_paywall = 1")
-            cursor.execute("UPDATE rss_feeds SET bot_username = 'free' WHERE is_paywall = 0")
+            # Copy data from the old table to the new table
+            cursor.execute('''
+                INSERT OR REPLACE INTO rss_feeds_new 
+                SELECT id, feed_url, community_name, community_id, last_updated_header, next_check, etag, bot_username 
+                FROM rss_feeds
+            ''')
             
-            # Remove the is_paywall column
-            cursor.execute("CREATE TABLE rss_feeds_new AS SELECT id, feed_url, community_name, community_id, last_updated_header, next_check, etag, bot_username FROM rss_feeds")
-            cursor.execute("DROP TABLE rss_feeds")
-            cursor.execute("ALTER TABLE rss_feeds_new RENAME TO rss_feeds")
+            # Drop the old table and rename the new one
+            cursor.execute('DROP TABLE rss_feeds')
+            cursor.execute('ALTER TABLE rss_feeds_new RENAME TO rss_feeds')
             
             print("Database migration completed successfully.")
         else:
