@@ -262,12 +262,12 @@ def process_messages_and_mentions(api, db, bot_username):
         api.send_private_message(pm['creator']['id'], response)
 
     # Process mentions
-    mentions = api.get_mentions()
-    for mention in mentions:
-        logger.info(f"Received mention from {mention['creator']['name']} in post '{mention['post']['name']}': {mention['comment']['content']}")
-        response = process_commands(api, db, mention['comment']['content'], mention['creator']['name'], bot_username)
-        api.mark_mention_as_read(mention['person_mention']['id'])
-        api.create_comment(mention['post']['id'], response, mention['comment']['id'])
+    #mentions = api.get_mentions()
+    #for mention in mentions:
+    #    logger.info(f"Received mention from {mention['creator']['name']} in post '{mention['post']['name']}': {mention['comment']['content']}")
+    #    response = process_commands(api, db, mention['comment']['content'], mention['creator']['name'], bot_username)
+    #    api.mark_mention_as_read(mention['person_mention']['id'])
+    #    api.create_comment(mention['post']['id'], response, mention['comment']['id'])
 
 def check_moderator(api, user_name, community_name):
     logger.debug(f"Checking {user_name} moderates {community_name}")
@@ -375,18 +375,6 @@ def process_commands(api, db, content, sender_name, bot_username):
     logger.debug(f"Sending response: {full_response}")
     return full_response
 
-def add_feed(api, db, rss_url, community, sender):
-    # TODO: Implement feed addition logic
-    return f"Adding feed {rss_url} to community {community}"
-
-def delete_feed(api, db, rss_url, community, sender):
-    # TODO: Implement feed deletion logic
-    return f"Deleting feed {rss_url} from community {community}"
-
-def list_feeds(api, db, community, sender):
-    # TODO: Implement feed listing logic
-    return f"Listing feeds for community {community}"
-
 def get_help_text():
     return """
 Available commands:
@@ -407,26 +395,25 @@ async def fetch_and_post(community_filter=None):
         'bot': LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
     }
 
-    next_loop = datetime.now(timezone.utc)
-
     while True:
         feeds = db.list_feeds()
 
         # Sleep until the nearest next_check time
         next_check_times = [parse_date_with_timezone(feed[5]) for feed in feeds if feed[5]]
         if next_check_times:
-            next_loop = min(next_check_times + [next_loop])
+            next_loop = min(next_check_times)
+        else:
+            next_loop = datetime.now(timezone.utc) + MIN_BACKOFF
 
-        while next_loop - datetime.now(timezone.utc) > MESSAGE_POLL_INTERVAL:
-            logger.info(f"  Waiting for {next_loop - datetime.now(timezone.utc)} seconds...")
+        logger.info(f"Sleeping until {next_loop}")
+
+        while datetime.now(timezone.utc) < next_loop:
             time.sleep(MESSAGE_POLL_INTERVAL.total_seconds())
             for bot_username, api in lemmy_apis.items():
                 process_messages_and_mentions(api, db, bot_username)
         else:
             for bot_username, api in lemmy_apis.items():
                 process_messages_and_mentions(api, db, bot_username)
-
-        next_loop = datetime.now(timezone.utc) + MESSAGE_POLL_INTERVAL
 
         hit_servers = set()
 
