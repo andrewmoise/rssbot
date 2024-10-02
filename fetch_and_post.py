@@ -1,4 +1,3 @@
-import asyncio
 import argparse
 import dateparser
 from datetime import datetime, timedelta, timezone
@@ -218,19 +217,15 @@ def process_feed_entries(db, feed_id, rss):
     time_limit = datetime.now(timezone.utc) - POST_WINDOW
 
     for entry in reversed(rss.entries):
-        if hasattr(entry, 'published'):
-            try:
+        try:
+            if hasattr(entry, 'published'):
                 published_date = parse_date_with_timezone(entry.published)
-            except ValueError as e:
-                logger.error(f"Date parsing error: {e} for date string: {entry.published}")
-                published_date = datetime.now(timezone.utc)
-        elif hasattr(entry, 'updated'):
-            try:
+            elif hasattr(entry, 'updated'):
                 published_date = parse_date_with_timezone(entry.updated)
-            except ValueError as e:
-                logger.error(f"Date parsing error: {e} for date string: {entry.published}")
+            else:
                 published_date = datetime.now(timezone.utc)
-        else:
+        except ValueError as e:
+            logger.error(f"Date parsing error: {e} for entry: {entry}")
             published_date = datetime.now(timezone.utc)
 
         article_url = entry.link
@@ -386,7 +381,7 @@ Available commands:
 You can include multiple commands in a single message, each on a new line.
     """
 
-async def fetch_and_post(community_filter=None):
+def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
 
     lemmy_apis = {
@@ -442,15 +437,16 @@ async def fetch_and_post(community_filter=None):
 
             # Check for unposted articles
             unposted_article = db.get_unposted_article(feed_id)
+            fetched_rss = None
 
             if not unposted_article:
                 # If no unposted articles, fetch new ones
                 logger.debug("  Network fetch")
-                rss, last_updated, etag = network_fetch(feed_url, last_updated, etag)
+                fetched_rss, last_updated, etag = network_fetch(feed_url, last_updated, etag)
                 
-                if rss:
+                if fetched_rss:
                     logger.debug("  Process feed entries")
-                    process_feed_entries(db, feed_id, rss)
+                    process_feed_entries(db, feed_id, fetched_rss)
                     unposted_article = db.get_unposted_article(feed_id)
                     logger.debug(f"  Unposted article: {unposted_article}")
 
@@ -491,11 +487,11 @@ async def fetch_and_post(community_filter=None):
                 logger.debug(f"    More to post, next_check reset to {next_check}")
                 db.update_feed_timestamps(feed_id, last_updated, etag, next_check)
             else:                            
-                next_check = get_backoff_next_check(db, feed, None)
+                next_check = get_backoff_next_check(db, feed, fetched_rss.entries if fetched_rss else None)
                 logger.debug(f"    Nothing to post, next_check reset to {next_check}")
                 db.update_feed_timestamps(feed_id, last_updated, etag, next_check)
 
-async def main():
+def main():
     parser = argparse.ArgumentParser(description='Fetch and post RSS feeds to Lemmy.')
     parser.add_argument('-c', '--communities', type=str, help='Comma-separated list of community IDs to update')
 
@@ -503,7 +499,22 @@ async def main():
 
     community_filter = args.communities.split(',') if args.communities else None
 
-    await fetch_and_post(community_filter)
+    while True:
+        try:
+            fetch_and_post(community_filter)
+        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as err:
+            logger.error(f"Connection error occurred: {err}")
+            logger.exception(err)
+            logger.error("Retrying in 60 seconds...")
+            time.sleep(60)
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}")
+            logger.exception(e)
+            break
+        else:
+            # This block will only execute if no exception was raised
+            logger.info("fetch_and_post completed successfully")
+            break
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
