@@ -385,9 +385,9 @@ def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
 
     lemmy_apis = {
-        'free': LemmyCommunicator(username=Config.LEMMY_FREE_BOT),
-        'paywall': LemmyCommunicator(username=Config.LEMMY_PAYWALL_BOT),
-        'bot': LemmyCommunicator(username=Config.LEMMY_BOT_BOT)
+        'free': LemmyCommunicator(username=Config.LEMMY_FREE_BOT, logger=logger),
+        'paywall': LemmyCommunicator(username=Config.LEMMY_PAYWALL_BOT, logger=logger),
+        'bot': LemmyCommunicator(username=Config.LEMMY_BOT_BOT, logger=logger)
     }
 
     while True:

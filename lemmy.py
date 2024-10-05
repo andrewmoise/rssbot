@@ -19,7 +19,8 @@ def parse_datetime(date_str):
 class LemmyCommunicator:
     TOKEN_FILE_TEMPLATE = "{server}_{user}_token.pkl"
 
-    def __init__(self, username, server=Config.LEMMY_SERVER):
+    def __init__(self, username, server=Config.LEMMY_SERVER, logger=None):
+        self.logger = logger
         self.server = server
         self.username = username
         self.token = self.get_token()
@@ -325,11 +326,30 @@ class LemmyCommunicator:
     def _make_request(self, method, url, **kwargs):
         time.sleep(Config.REQUEST_DELAY)
         while True:
-            response = requests.request(method, url, **kwargs)
-            if response.status_code == 429 or response.status_code == 503:
-                print("Rate limited. Sleeping for 60 seconds.")
-                time.sleep(60)
-                continue
-            elif not response.ok:
-                response.raise_for_status()
-            return response
+            try:
+                response = requests.request(method, url, **kwargs)
+                
+                if response.status_code == 429 or response.status_code == 503:
+                    print("Rate limited. Sleeping for 60 seconds.")
+                    time.sleep(60)
+                    continue
+                elif not response.ok:
+                    if self.logger is not None:
+                        # Log the request details
+                        self.logger.error(f"Request failed: {method} {url}")
+                        self.logger.error(f"Request headers: {kwargs.get('headers', {})}")
+                        self.logger.error(f"Request body: {kwargs.get('json', '')}")
+                        
+                        # Log the response details
+                        self.logger.error(f"Response status code: {response.status_code}")
+                        self.logger.error(f"Response headers: {response.headers}")
+                        self.logger.error(f"Response content: {response.text}")
+                    
+                    response.raise_for_status()
+                
+                return response
+            
+            except requests.exceptions.RequestException as e:
+                # Log any request exceptions
+                logger.exception(f"Request exception occurred: {str(e)}")
+                raise
