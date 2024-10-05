@@ -2,6 +2,7 @@ import argparse
 import dateparser
 from datetime import datetime, timedelta, timezone
 import feedparser
+import html
 import logging
 import re
 import requests
@@ -293,21 +294,23 @@ def process_commands(api, db, content, sender_name, bot_username):
                 if len(args) == 2:
                     rss_url, community_name = args
                     community_name = community_name.lstrip('!')
+                    if '@' not in community_name:
+                        community_name = f"{community_name}@{Config.LEMMY_SERVER}"
                     community_id = api.resolve_community(community_name)
                     if community_id is not None:
                         if check_moderator(api, sender_name, community_name):
                             logger.info("Would succeed")
                         else:
                             logger.info("Would fail")
-                            response.append(f"{sender_name} must be a moderator of {community_name} to make changes.")
+                            response.append(f"{sender_name} must be a moderator of !{community_name} to make changes.")
                         community_id = api.fetch_community_id(community_name)
                         if community_id is None:
-                            response.append(f"Could not find community {community_name}")
+                            response.append(f"Could not find community !{community_name}")
                         else:
                             db.add_feed(rss_url, community_name, community_id, bot_username=bot_username)
-                            response.append(f"Added {rss_url} to {community_name}")
+                            response.append(f"Added {rss_url} to !{community_name}")
                     else:
-                        response.append(f"Could not find {community_name}")
+                        response.append(f"Could not find !{community_name}")
                 else:
                     response.append("Invalid number of arguments for /add command.")
             elif command == 'delete':
@@ -319,12 +322,12 @@ def process_commands(api, db, content, sender_name, bot_username):
                         logger.info("Would succeed")
                         changes = db.remove_feed(community_name=community, feed_url=rss_url)
                         if changes == 0:
-                            response.append('No feeds found matching those criteria.')
+                            response.append(f"No feed {rss_url} found in !{community}")
                         else:
-                            response.append(f"Deleted {changes} feed{'s' if changes > 1 else ''}")
+                            response.append(f"Deleted {changes} feed{'s' if changes > 1 else ''} from !{community}")
                     else:
                         logger.info("Would fail")
-                        response.append(f"{sender_name} must be a moderator of {community} to make changes.")
+                        response.append(f"{sender_name} must be a moderator of !{community} to make changes.")
                 else:
                     response.append("Invalid number of arguments for /delete command.")
             elif command == 'list':
@@ -345,10 +348,10 @@ def process_commands(api, db, content, sender_name, bot_username):
                             response.append("* " + feed[1])
 
                     if count == 0:
-                        response.append(f"No feed found for {community}")
+                        response.append(f"No feeds found connected to !{community}")
                     else:
                         # We want a single newline only
-                        response[-count] = "Feeds active for {community}:\n" + response[-count]
+                        response[-count] = f"Feeds active for !{community}:\n" + response[-count]
                 else:
                     response.append("Invalid number of arguments for /list command.")
             elif command == 'help':
@@ -380,6 +383,56 @@ Available commands:
 
 You can include multiple commands in a single message, each on a new line.
     """
+
+def process_headline(headline):
+    # Replace newlines with spaces
+    new_headline = re.sub('\n', ' ', headline)
+
+    # Process styling tags
+    styling_map = {
+        'em': ('𝘢', '𝘈'),       # Italic
+        'strong': ('𝗮', '𝗔'),   # Bold
+        'sub': '₀₁₂₃₄₅₆₇₈₉',    # Subscript
+        'sup': '⁰¹²³⁴⁵⁶⁷⁸⁹'     # Superscript
+    }
+
+    def replace_styled_text(match):
+        tag = match.group(1)
+        content = match.group(2)
+        if tag not in styling_map:
+            return content
+        
+        styled_text = ''
+        for char in content:
+            if char.isalpha():
+                if char.islower():
+                    styled_text += chr(ord(styling_map[tag][0]) + (ord(char) - ord('a')))
+                else:
+                    styled_text += chr(ord(styling_map[tag][1]) + (ord(char) - ord('A')))
+            elif char.isdigit() and tag in ['sub', 'sup']:
+                styled_text += styling_map[tag][int(char)]
+            else:
+                styled_text += char
+        return styled_text
+
+    new_headline = re.sub(r'<(em|strong|sub|sup)>(.*?)</\1>', replace_styled_text, new_headline)
+
+    # Remove other HTML tags
+    new_headline = re.sub(r'<.*?>', '', new_headline)
+
+    # Replace &amp; with &
+    new_headline = re.sub(r'&amp;', '&', new_headline)
+
+    # Remove content after |
+    new_headline = re.sub(r' *\|.*', '', new_headline)
+
+    # Remove "Pluralistic: " prefix and date
+    new_headline = re.sub(r'^Pluralistic: +(.*?) +\(\d+ \w+ \d+\)$', r'\1', new_headline)
+
+    # Unescape any remaining HTML entities
+    new_headline = html.unescape(new_headline)
+
+    return new_headline
 
 def fetch_and_post(community_filter=None):
     db = RSSFeedDB('rss_feeds.db')
@@ -453,11 +506,7 @@ def fetch_and_post(community_filter=None):
             if unposted_article:
                 article_id, _, article_url, headline, _, lemmy_post_id = unposted_article
 
-                new_headline = re.sub('\n', ' ', headline)
-                new_headline = re.sub(r'<.*?>', '', new_headline)
-                new_headline = re.sub(r'&amp;', '&', new_headline)
-                new_headline = re.sub(r' *\|.*', '', new_headline)
-                new_headline = re.sub(r'^Pluralistic: +(.*?) +\(\d+ \w+ \d+\)$', r'\1', new_headline)
+                new_headline = process_headline(headline)
                 if new_headline != headline:
                     logger.debug(f"  Fixing {headline}")
                     headline = new_headline
