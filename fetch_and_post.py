@@ -24,7 +24,26 @@ MAX_BACKOFF = timedelta(days=4)
 
 MESSAGE_POLL_INTERVAL = timedelta(seconds=60)
 
-BLACKLIST_RE = r'Shop our top 5 deals of the week|Amazon deal of the day.*|Today.s Wordle.*|Wordle today:.*|.*NYT Connections.*|.*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*|Daily Deal:.*|Shop our .*'
+BLACKLIST_REGEXES = [
+    r'Shop our top 5 deals of the week',
+    r'Amazon deal of the day.*',
+    r'Today.s Wordle.*',
+    r'Wordle today:.*',
+    r'.*NYT Connections.*',
+    r'.*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*[A-Z][A-Z][A-Z][A-Z][A-Z].*',
+    r'Daily Deal:.*',
+    r'Shop our .*',
+    r'.*\(on sale now.*',
+    r'.*Big Deal Days.*',
+    r'.*Way Day Sale.*',
+    r'.*(★★|☆☆).*',
+    r'Last chance:.*',
+]
+
+def compile_blacklist():
+    return re.compile('|'.join(BLACKLIST_REGEXES))
+
+BLACKLIST_RE = compile_blacklist()
 
 POST_WINDOW = timedelta(days=3) # Max age of articles to post
 
