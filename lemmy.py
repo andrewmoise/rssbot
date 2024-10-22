@@ -25,10 +25,7 @@ class LemmyCommunicator:
         self.username = username
         self.token = self.get_token()
         if not self.token:
-            if Config.LEMMY_PASSWORD:
-                password = Config.LEMMY_PASSWORD
-            else:
-                password = getpass.getpass(f"Enter password for {self.username} on {self.server}: ")
+            password = getpass.getpass(f"Enter password for {self.username} on {self.server}: ")
             self.token = self.login(password)
 
     def get_token(self):
