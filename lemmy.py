@@ -348,5 +348,6 @@ class LemmyCommunicator:
             
             except requests.exceptions.RequestException as e:
                 # Log any request exceptions
-                logger.exception(f"Request exception occurred: {str(e)}")
+                if self.logger is not None:
+                    self.logger.exception(f"Request exception occurred: {str(e)}")
                 raise
