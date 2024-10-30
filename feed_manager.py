@@ -50,6 +50,8 @@ def appoint_mods(lemmy_api, community_name, community_id, bot_username):
         
         # Appoint as mod
         mod_id = lemmy_api.fetch_user_id(mod_actor_id)
+        if mod_id is None:
+            raise Exception(f"Can't find ID for {mod_actor_id}")
         lemmy_api.appoint_mod(community_id, mod_id)
     
     # Appoint the main bot
@@ -125,12 +127,19 @@ def update_feed(db, community_name, new_feed_url, bot_username):
     print(f"Updated feed URL for community '{community_name}' to '{new_feed_url}'.")
     print(f"Updated bot account to {bot_username}")
 
-def update_mods(db, lemmy_api):
+def update_mods(db, lemmy_api, filter_feed_url=None, filter_community_name=None):
     feeds = db.list_feeds()
     processed_communities = set()
     
     for feed in feeds:
+        feed_url = feed[1]
         community_name = feed[2]
+
+        if filter_feed_url is not None and feed_url != filter_feed_url:
+            continue
+        if filter_community_name is not None and community_name != filter_community_name:
+            continue
+
         community_id = feed[3]
         bot_username = feed[7]  # Assuming bot_username is at index 7
         
@@ -179,7 +188,9 @@ def main():
         else:
             print("Missing arguments for update. Please provide a feed URL and community name.")
     elif args.command == 'update_mods':
-        update_mods(db, lemmy_api)
+        update_mods(db, lemmy_api, args.feed_url, args.community_name)
+        if args.feed_url is not None and args.community_name is None:
+            update_mods(db, lemmy_api, None, args.feed_url)
     else:
         parser.print_help()
 
