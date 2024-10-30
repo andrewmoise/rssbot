@@ -22,9 +22,12 @@ SHORT_BACKOFF = timedelta(hours=2)
 LONG_BACKOFF = timedelta(hours=24)
 MAX_BACKOFF = timedelta(days=4)
 
+POST_WINDOW = timedelta(days=3) # Max age of articles to post
+
 MESSAGE_POLL_INTERVAL = timedelta(seconds=60)
 
-BLACKLIST_REGEXES = [
+# Global blacklist patterns
+GLOBAL_BLACKLIST = [
     r'Shop our top 5 deals of the week',
     r'Amazon deal of the day.*',
     r'Today.s Wordle.*',
@@ -40,12 +43,31 @@ BLACKLIST_REGEXES = [
     r'Last chance:.*',
 ]
 
-def compile_blacklist():
-    return re.compile('|'.join(BLACKLIST_REGEXES))
+# Community-specific blacklist patterns
+COMMUNITY_BLACKLIST = {
+    'globalnews': r'.*(Amazon|Prime).*',
+}
 
-BLACKLIST_RE = compile_blacklist()
+# Compile the global pattern once
+GLOBAL_BLACKLIST_RE = re.compile('|'.join(GLOBAL_BLACKLIST))
 
-POST_WINDOW = timedelta(days=3) # Max age of articles to post
+# Compile community patterns once
+COMMUNITY_BLACKLIST_RE = {
+    community: re.compile(pattern)
+    for community, pattern in COMMUNITY_BLACKLIST.items()
+}
+
+def is_blacklisted(headline, community=None):
+    # Check global blacklist first
+    if GLOBAL_BLACKLIST_RE.match(headline):
+        return True
+    
+    # Check community-specific blacklist if applicable
+    if community and community in COMMUNITY_BLACKLIST_RE:
+        if COMMUNITY_BLACKLIST_RE[community].match(headline):
+            return True
+    
+    return False
 
 def setup_logging():
     logger = logging.getLogger()
@@ -232,7 +254,7 @@ def network_fetch(feed_url, last_updated, etag):
         logger.error(f"Exception while fetching feed {feed_url}: {str(e)}")
         return None, last_updated, etag
 
-def process_feed_entries(db, feed_id, rss):
+def process_feed_entries(db, feed_id, community_name, rss):
     logger.debug(f"Processing feed ID {feed_id}")
     time_limit = datetime.now(timezone.utc) - POST_WINDOW
 
@@ -257,8 +279,8 @@ def process_feed_entries(db, feed_id, rss):
         if published_date < time_limit:
             continue
 
-        if re.match(BLACKLIST_RE, headline):
-            logger.debug(f"  Not posting {headline}, blacklisted")
+        if is_blacklisted(headline, community_name):
+            logger.debug(f"  Not posting {headline}, blacklisted for community {community_name}")
             continue
 
         headline = trim_headline(headline)
@@ -518,7 +540,7 @@ def fetch_and_post(community_filter=None):
                 
                 if fetched_rss:
                     logger.debug("  Process feed entries")
-                    process_feed_entries(db, feed_id, fetched_rss)
+                    process_feed_entries(db, feed_id, community_name, fetched_rss)
                     unposted_article = db.get_unposted_article(feed_id)
                     logger.debug(f"  Unposted article: {unposted_article}")
 
