@@ -45,7 +45,7 @@ GLOBAL_BLACKLIST = [
 
 # Community-specific blacklist patterns
 COMMUNITY_BLACKLIST = {
-    'globalnews': r'.*(Amazon|Prime).*',
+    'globalnews': r'.*(Amazon|Prime| gifts |).*',
 }
 
 # Compile the global pattern once
